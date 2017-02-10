@@ -7,6 +7,8 @@ is
 ** Changelog:
 **   Date: 2016-12-14
 **     beta release
+**   Date: 2017-02-11
+**     version 0.20
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016 by Anton Scheffer
@@ -2262,8 +2264,8 @@ dbms_output.put_line( 'stuf2 ' || i );
       end loop;  
       show_bits( t_modemsg, 'mode:' );
 --
-      t_sz := trunc( t_bil / t_wordsize ) - trunc( t_sbits.count / t_wordsize );
---dbms_output.put_line( 'degree:' || t_sz ); 
+      t_sz := ( t_bil - t_sbits.count ) / t_wordsize;
+dbms_output.put_line( 'degree:' || t_sz ); 
       case t_wordsize
         when 6 then
           t_tmp := reed_solomon( bitstoword( t_sbits, t_wordsize ), 67, 64, t_sz ); 
@@ -2274,7 +2276,7 @@ dbms_output.put_line( 'stuf2 ' || i );
         when 12 then
           t_tmp := reed_solomon( bitstoword( t_sbits, t_wordsize ), 4201, 4096, t_sz ); 
       end case;
---dbms_output.put_line( 'padding:' || mod( t_bil, t_wordsize ) );
+dbms_output.put_line( 'padding:' || mod( t_bil, t_wordsize ) );
       if mod( t_bil, t_wordsize ) > 0
       then
         declare
@@ -2297,18 +2299,11 @@ dbms_output.put_line( 'stuf2 ' || i );
       show_bits( t_sbits, 'msg:' );
     end;
 --
-    if t_compact
-    then
-      t_width := 4 * t_layers + 11;
-    else
-      t_width := 4 * t_layers + 15;
-      t_width := t_width + 2 * trunc( trunc( t_width / 2 - 1 ) / 15 );
-    end if;
+    t_width := 4 * t_layers + case when t_compact then 11 else 15 end;
     for i in 1 .. t_width
     loop
       t_dat := utl_raw.concat( t_dat, '00', utl_raw.copies( 'FF', t_width ) );
     end loop;
---
     declare
       t_cent number := ( t_width+1 ) * trunc( t_width/2 ) + 1 + ceil( t_width/2 );
       t_idx pls_integer;
@@ -2378,66 +2373,6 @@ dbms_output.put_line( 'stuf2 ' || i );
       else
         dline( 6 );
         dorient( 7 ); 
-        dmode( 7, 10, t_modemsg );
-        for i in - ceil( t_width / 2 ) + 1 .. ceil( t_width / 2 ) - 1
-        loop
-          if mod( i, 16 ) = 0
-          then
-            for j in 1 .. ceil( t_width / 2 ) - 1
-            loop
-              draw( i, j, 1 - mod( j, 2 ) );
---dbms_output.put_line( i || ' ' || ( -j ) ); 
-              draw( i, -j, 1 - mod( j, 2 ) );
-              draw( j, i, 1 - mod( j, 2 ) );
-              draw( -j, i, 1 - mod( j, 2 ) );
-            end loop;
-          end if;
-        end loop;
---
-        t_idx := 0;
-        t_x2 := trunc( t_width / 2 ) + 1;
-        for i in reverse 1 .. t_layers
-        loop
-          t_w := 4 * i + 15;
-          t_w := t_w + 2 * trunc( trunc( t_w / 2 - 1 ) / 15 );
-          t_w2 := 8 * ( I + 3 );
-          t_w := trunc( t_w / 2 );
-          t_x1 := t_x2 - case mod( t_x2, 16 ) when 1 then 2 else 1 end;
-          t_x2 := t_x1 - case mod( t_x1, 16 ) when 1 then 2 else 1 end;
-dbms_output.put_line( 'layer: ' || i || ' ' || t_w || ' ' || t_w2 || ' ' || t_idx || ' ' || t_width);
-          for j in - t_w .. t_w - 2
-          loop
-            if mod( j, 16 ) != 0
-            then
-              draw( -t_x1, j, t_sbits( t_idx ) );          
-              draw( -t_x2, j, t_sbits( t_idx + 1 ) );
-              draw(  j, t_x1, t_sbits( t_idx + t_w2 ) );          
-              draw(  j, t_x2, t_sbits( t_idx + t_w2 + 1 ) );          
-              draw(  t_x1, -j, t_sbits( t_idx + 2 * t_w2 ) );          
-              draw(  t_x2, -j, t_sbits( t_idx + 2 * t_w2 + 1 ) );
-begin          
-              draw(  -j, -t_x1, t_sbits( t_idx + 3 * t_w2 ) );          
-              draw(  -j, -t_x2, t_sbits( t_idx + 3 * t_w2 + 1 ) );
-t_st := t_idx + 3 * t_w2 + 1; 
-exception when others then
-dbms_output.put_line( j || ' ' || t_w || ' ' || t_w2 || ' ' || t_idx );
-dbms_output.put_line( t_sbits.last );
-dbms_output.put_line( ( t_idx + 3 * t_w2 ) );
-dbms_output.put_line( t_width );
-raise;
-end;          
-              t_idx := t_idx + 2;          
-            end if;
-          end loop;
-          t_idx := t_idx + 3 * t_w2;
-/*
-          if i in ( 12 )
-          then
-            t_idx := t_idx - 4;
-          end if;
-*/          
-        end loop;
-dbms_output.put_line( 'last: ' || t_st );
       end if;
     end;
     return generate_png( t_dat
@@ -2507,9 +2442,9 @@ dbms_output.put_line( 'last: ' || t_st );
         elsif upper( p_type ) in ( 'QRCODE', 'QR', 'QR-CODE' )
         then
           return qrcode( p_val, p_parm );
---        elsif upper( p_type ) in ( 'AZTEC' )
---        then
---          return aztec( p_val, p_parm );
+        elsif upper( p_type ) in ( 'AZTEC' )
+        then
+          return aztec( p_val, p_parm );
         elsif upper( p_type ) in ( 'ITF', 'INTERLEAVED', 'INTERLEAVED2OF5', 'INTERLEAVED-2-OF-5' )
         then
           return itf( p_val, p_parm );
