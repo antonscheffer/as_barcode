@@ -9,6 +9,8 @@ is
 **     beta release
 **   Date: 2017-02-11
 **     version 0.20
+**   Date: 2017-08-15
+**     fixed bug in used png format
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016 by Anton Scheffer
@@ -125,7 +127,7 @@ THE SOFTWARE.
                          , '0000000D'
                          , t_ihdr
                          , crc32( t_ihdr )
-                         , to_char( utl_raw.length( t_idat ) + 4, 'fm0XXXXXXX' )
+                         , to_char( utl_raw.length( t_idat ) - 4, 'fm0XXXXXXX' )
                          , t_idat
                          , crc32( t_idat )
                          , '0000000049454E44AE426082' -- IEND
