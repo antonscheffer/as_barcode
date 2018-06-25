@@ -11,6 +11,8 @@ is
 **     version 0.20
 **   Date: 2017-08-15
 **     fixed bug in used png format
+**   Date: 2018-06-25 kevin@kevindurette.com
+**     Added function barcode_blob to return BLOB instead of RAW
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016 by Anton Scheffer
@@ -1160,7 +1162,7 @@ THE SOFTWARE.
     is
       t_p1 pls_integer;
       t_p2 pls_integer;
-/* Table 7 — Number of symbol characters and input data capacity for QR Code 2005
+/* Table 7 Â— Number of symbol characters and input data capacity for QR Code 2005
 Number of data codewords,
 Data capacity Numeric,
 Data capacity Alphanumeric,
@@ -2492,6 +2494,13 @@ dbms_output.put_line( 'padding:' || mod( t_bil, t_wordsize ) );
   is
   begin
     return 'data:image/png;base64,' || utl_raw.cast_to_varchar2( utl_encode.base64_encode( barcode( p_val, p_type, p_parm ) ) );
+  end;
+--
+  function barcode_blob( p_val varchar2, p_type varchar2, p_parm varchar2 := null )
+  return blob
+  is
+  begin
+    return to_blob(barcode(p_val, p_type, p_parm));
   end;
 end;
 /
