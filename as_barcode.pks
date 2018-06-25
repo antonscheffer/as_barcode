@@ -7,5 +7,8 @@ is
 --
   function datauri_barcode( p_val varchar2, p_type varchar2, p_parm varchar2 := null )
   return varchar2;
+--
+  function barcode_blob( p_val varchar2, p_type varchar2, p_parm varchar2 := null )
+  return blob;
 end;
 /
