@@ -1160,7 +1160,7 @@ THE SOFTWARE.
     is
       t_p1 pls_integer;
       t_p2 pls_integer;
-/* Table 7 — Number of symbol characters and input data capacity for QR Code 2005
+/* Table 7 Â— Number of symbol characters and input data capacity for QR Code 2005
 Number of data codewords,
 Data capacity Numeric,
 Data capacity Alphanumeric,
@@ -1581,7 +1581,7 @@ dbms_output.put_line( 'byte: ' || t_version );
       end loop;
     else -- ECI mode
       add_bits( '07', 4 ); -- mode
-      add_bits( '1A', 6 ); -- ECI Assignment number 26 = UTF8
+      add_bits( '1A', 8 ); -- ECI Assignment number 26 = UTF8
       add_bits( '04', 4 ); -- byte mode
       case
         when t_version <= 9
