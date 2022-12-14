@@ -13,20 +13,23 @@ is
 **     fixed bug in used png format
 **   Date: 2022-11-04
 **     added svg output
+**   Date: 2022-12-14
+**     removed download_barcode
+**     started with datamatrix
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2022 by Anton Scheffer
-
+ 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
+ 
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
-
+ 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -34,24 +37,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-
+ 
 ******************************************************************************
 ******************************************** */
-  type tp_ean_bars is table of raw(7) index by pls_integer;
   type tp_bits is table of pls_integer index by pls_integer;
   type tp_matrix is table of tp_bits index by pls_integer;
   type tp_bar_row is table of number;
   type tp_mapping is table of tp_bar_row index by pls_integer;
-  --
-  type t_ean_digit is record
-    ( w1 number
-    , w2 number
-    , w3 number
-    , w4 number
-    , d  varchar2(1000)
-    );
-  type t_ean_digits is table of t_ean_digit index by pls_integer;
-  g_ean_digits t_ean_digits;
   --
   function xjv
     ( p_json varchar2 character set any_cs
@@ -394,6 +386,20 @@ THE SOFTWARE.
     return null;
   end;
   --
+  function check_int( p_parm varchar2, p_name varchar2, p_max pls_integer := null )
+  return pls_integer
+  is
+    l_int pls_integer;
+  begin
+    l_int := trunc( to_number( xjv( p_parm, p_name ) ) );
+    if l_int not between 0 and nvl( p_max, l_int )
+    then
+      l_int := null;
+    end if;
+    return l_int;
+  exception when others then return null;
+  end;
+ 
   function check_pos( p_parm varchar2, p_name varchar2 )
   return boolean
   is
@@ -408,123 +414,103 @@ THE SOFTWARE.
     return lower( jv( p_parm, p_name ) ) in ( 'false', 'n', 'no' );
   end;
   --
-  procedure save_raw
-    ( p_file raw
-    , p_dir varchar2 := 'HOME'
-    , p_filename varchar2 := 'test.png'
-    )
-  is
-    t_fh utl_file.file_type;
-    t_len pls_integer := 32767;
-  begin
-    t_fh := utl_file.fopen( p_dir, p_filename, 'wb' );
-    utl_file.put_raw( t_fh, p_file );
-    utl_file.fclose( t_fh );
-  end;
-  --
-  function generate_png( p_dat blob, p_width pls_integer, p_height pls_integer )
+  function generate_png( p_dat blob, p_width pls_integer, p_height pls_integer, p_parm varchar2 )
   return raw
   is
-    t_ihdr raw(25);
-    t_idat raw(32767);
---
+    t_ihdr  raw(25);
+    t_plte  raw(32);
+    t_idat  raw(32767);
+    t_dark  raw(3) := '000000';
+    t_light raw(3) := 'FFFFFF';
+    --
     function crc32( p_src raw )
     return raw
     is
     begin
       return utl_raw.reverse( utl_raw.substr( utl_raw.substr( utl_compress.lz_compress( p_src ), -8 ), 1, 4 ) );
     end;
---
-  function method0_compress( p_val blob )
-  return raw
-  is
-    t_tmp raw(32767);
-    function adler32( p_val blob )
-    return varchar2
+    --
+    function method0_compress( p_val blob )
+    return raw
     is
-      s1 pls_integer := 1;
-      s2 pls_integer := 0;
-      t_val varchar2(32766);
-      t_pos number := 1;
-      t_len number := dbms_lob.getlength( p_val );
-    begin
-      loop
-        exit when t_pos > t_len;
-        t_val := rawtohex( dbms_lob.substr( p_val, 16383, t_pos ) );
-        for i in 1 .. length( t_val ) / 2
+      t_tmp raw(32767);
+      function adler32( p_val blob )
+      return varchar2
+      is
+        s1 pls_integer := 1;
+        s2 pls_integer := 0;
+        t_val varchar2(32766);
+        t_pos number := 1;
+        t_len number := dbms_lob.getlength( p_val );
+      begin
         loop
-          begin
-            s1 := s1 + to_number( substr( t_val, i * 2 - 1, 2 ), 'XX' );
-          exception
-            when others then
-              s1 := mod( s1, 65521 ) + to_number( substr( t_val, i * 2 - 1, 2 ), 'XX' );
-          end;
-          begin
-            s2 := s2 + s1;
-          exception
-            when others then
-              s2 := mod( s2, 65521 ) + s1;
-          end;
+          exit when t_pos > t_len;
+          t_val := rawtohex( dbms_lob.substr( p_val, 16383, t_pos ) );
+          for i in 1 .. length( t_val ) / 2
+          loop
+            begin
+              s1 := s1 + to_number( substr( t_val, i * 2 - 1, 2 ), 'XX' );
+            exception
+              when others then
+                s1 := mod( s1, 65521 ) + to_number( substr( t_val, i * 2 - 1, 2 ), 'XX' );
+            end;
+            begin
+              s2 := s2 + s1;
+            exception
+              when others then
+                s2 := mod( s2, 65521 ) + s1;
+            end;
+          end loop;
+          t_pos := t_pos + 16383;
         end loop;
-        t_pos := t_pos + 16383;
-      end loop;
-      s1 := mod( s1, 65521 );
-      s2 := mod( s2, 65521 );
-      return to_char( s2, 'fm0XXX' ) || to_char( s1, 'fm0XXX' );
+        s1 := mod( s1, 65521 );
+        s2 := mod( s2, 65521 );
+        return to_char( s2, 'fm0XXX' ) || to_char( s1, 'fm0XXX' );
+      end;
+    begin
+      t_tmp := utl_compress.lz_compress( p_val );
+      return utl_raw.concat( '789C'
+                           , utl_raw.substr( t_tmp, 11, utl_raw.length( t_tmp ) - 18 )
+                           , adler32( p_val )
+                           );
     end;
-  begin
-    t_tmp := utl_compress.lz_compress( p_val );
-    return utl_raw.concat( '789C'
-                         , utl_raw.substr( t_tmp, 11, utl_raw.length( t_tmp ) - 18 )
-                         , adler32( p_val )
-                         );
-  end;
---
+    --
   begin
     t_ihdr := utl_raw.concat( '49484452' -- IHDR
                             , to_char( p_width, 'fm0XXXXXXX' )
                             , to_char( p_height, 'fm0XXXXXXX' )
-                            , '0800000000'  -- Bit depth 8
-                                            -- Colour type 0
+                            , '0803000000'  -- Bit depth 8
+                                            -- Colour type 3 palet
                                             -- Compression method 0
                                             -- Filter method 0
                                             -- Interlace method 0
+                            );
+    t_plte := utl_raw.concat( '504C5445' -- PLTE
+                            , t_dark
+                            , t_light
                             );
     t_idat := utl_raw.concat( '49444154' -- IDAT
                             , method0_compress( p_dat )
                             );
     return utl_raw.concat( '89504E470D0A1A0A' -- signature
-                         , '0000000D'
+                         , '0000000D'         -- length IHDR
                          , t_ihdr
                          , crc32( t_ihdr )
+                         , '00000006'         -- length PLTE
+                         , t_plte
+                         , crc32( t_plte )
                          , to_char( utl_raw.length( t_idat ) - 4, 'fm0XXXXXXX' )
                          , t_idat
                          , crc32( t_idat )
                          , '0000000049454E44AE426082' -- IEND
                          );
-  end;
---
+  end generate_png;
+  --
   function bitxor( x number, y number )
   return number
   is
   begin
     return x + y - 2 * bitand( x, y );
-  end;
---
-  procedure show_bits( p_bits tp_bits, p_txt varchar2 := null )
-  is
-  begin
-    dbms_output.put( ' ' );
-    for i in 0 .. trunc( p_bits.count / 8 )
-    loop
-      for j in 0 .. 7
-      loop
-        dbms_output.put( case p_bits( i * 8 + j ) when 1 then 'X' else '.' end );
-      end loop;
-      dbms_output.put( ' ' );
-    end loop;
-    dbms_output.put_line( '' );
-    exception when no_data_found then dbms_output.put_line( '' );
   end;
   --
   procedure append_bits( p_bits in out tp_bits, p_val number, p_cnt number )
@@ -600,7 +586,7 @@ THE SOFTWARE.
                         );
       end loop;
 -- t_log( 1 ) is altijd 0
---      t_g(0) := bitxor( 0, t_exp( t_log( t_g( 0 ) ) + t_log( 1 ) ) );
+ --     t_g(0) := bitxor( 0, t_exp( t_log( t_g( 0 ) ) + t_log( 1 ) ) );
     end loop;
 --
     t_x := p_data.first;
@@ -612,7 +598,7 @@ THE SOFTWARE.
     loop
       t_ecc( i ) := 0;
     end loop;
---
+    --
     while t_ecc.count >= t_g.count
     loop
       t_x := t_ecc( t_ecc.first );
@@ -626,7 +612,7 @@ THE SOFTWARE.
       end if;
       t_ecc.delete( t_ecc.first );
     end loop;
---
+    --
     t_x := t_ecc.first;
     for i in t_ecc.first .. t_ecc.last
     loop
@@ -648,22 +634,35 @@ THE SOFTWARE.
     return to_char( ceil( l_tmp / 10 ) * 10 - l_tmp, 'fm0' );
   end;
   --
-  procedure get_ean_bars( p_bars in out tp_ean_bars )
+  procedure add_quiet( p_matrix in out nocopy tp_matrix, p_parm varchar2, p_quiet pls_integer )
   is
-    t_def raw(70) := utl_raw.concat( '000000FFFF00FF0000FFFF0000FF0000FF00'
-                                   , '00FFFF00FFFFFFFF00FF00FF000000FFFF00'
-                                   , 'FFFF000000FF00FF00FFFFFFFF00FFFFFF00'
-                                   , 'FFFF00FFFF00FFFFFF000000FF00FFFF'
-                                   );
+    l_height pls_integer := p_matrix.count;
+    l_width  pls_integer := p_matrix( p_matrix.first ).count;
+    l_quiet pls_integer;
   begin
-    for i in 0 .. 9
-    loop
-      p_bars(i+20) := utl_raw.substr( t_def, i*7 + 1, 7 ); -- R-code
-      p_bars(i) := utl_raw.bit_complement( p_bars(i+20) ); -- L-code
-      p_bars(i+10) := utl_raw.reverse( p_bars(i+20) );     -- G-code
+    l_quiet := coalesce( check_int( p_parm, 'quiet' ), p_quiet, 0 );
+    if l_quiet = 0
+    then
+      return;
+    end if;
+    for i in reverse 0 .. l_height - 1 loop
+      for j in reverse 0 .. l_width - 1 loop
+        p_matrix( i + l_quiet )( j + l_quiet ) := p_matrix(i)(j);
+      end loop;
+      for j in 0 .. l_quiet - 1 loop
+        p_matrix( i + l_quiet )(j) := 0;
+        p_matrix( i + l_quiet )( j + l_width + l_quiet ) := 0;
+      end loop;
     end loop;
-  end;
-  --
+    for j in 0 .. l_width + 2 * l_quiet - 1 loop
+      p_matrix(0)(j) := 0;
+    end loop;
+    for i in 0 .. l_quiet - 1 loop
+      p_matrix(i) := p_matrix(0);
+      p_matrix( i + l_quiet + l_height ) := p_matrix(0);
+    end loop;
+  end add_quiet;
+    --
   procedure gen_qrcode_matrix( p_val varchar2 character set any_cs
                              , p_parm varchar2
                              , p_matrix out tp_matrix
@@ -1138,29 +1137,6 @@ THE SOFTWARE.
       return l_version;
     end get_version;
     --
-    procedure add_quiet( p_matrix in out nocopy tp_matrix )
-    is
-      l_width pls_integer := p_matrix.count;
-      l_quiet pls_integer := 4;
-    begin
-      for i in reverse 0 .. l_width - 1 loop
-        for j in reverse 0 .. l_width - 1 loop
-          p_matrix( i + l_quiet )( j + l_quiet ) := p_matrix(i)(j);
-        end loop;
-        for j in 0 .. l_quiet - 1 loop
-          p_matrix( i + l_quiet )(j) := 0;
-          p_matrix( i + l_quiet )( j + l_quiet + l_width ) := 0;
-        end loop;
-      end loop;
-      for j in 0 .. l_width + 2 * l_quiet - 1 loop
-        p_matrix(0)(j) := 0;
-      end loop;
-      for i in 0 .. l_quiet - 1 loop
-        p_matrix(i) := p_matrix(0);
-        p_matrix( i + l_quiet + l_width ) := p_matrix(0);
-      end loop;
-    end add_quiet;
-    --
     procedure add_byte_data( p_val raw, p_version pls_integer, p_stream in out nocopy tp_bits )
     is
       l_len pls_integer := utl_raw.length( p_val );
@@ -1280,7 +1256,7 @@ THE SOFTWARE.
       append_bits( l_stream, 17, 8 );
       l_len := l_len + 8;
     end loop;
- -- show_bits( l_stream );
+    --
     declare
       l_data      tp_bits;
       l_ecc       tp_bits;
@@ -1339,15 +1315,12 @@ THE SOFTWARE.
             append_bits( l_stream, l_new( i ), 8 );
           end loop;
     end;
- -- show_bits( l_stream );
---
---  xabc
-  add_patterns( l_version, p_matrix );
-  add_stream( 4 * l_version + 17, l_stream, p_matrix );
-  --
-  l_stream.delete;
-  --
---dbms_output.put_line( case l_eclevel when 1 then 'L' when 2 then 'M' when 3 then 'Q' when 4 then 'H' else '???' end );
+    --
+    add_patterns( l_version, p_matrix );
+    add_stream( 4 * l_version + 17, l_stream, p_matrix );
+    --
+    l_stream.delete;
+    --
     declare
       l_width pls_integer := 4 * l_version + 17;
       l_mask pls_integer;
@@ -1532,12 +1505,7 @@ THE SOFTWARE.
       mask_matrix( p_matrix, p_matrix, l_mask );
     end;
     --
-    if check_neg( p_parm, 'double_backslash' )
-    then
-      null;
-    else
-      add_quiet( p_matrix );
-    end if;
+    add_quiet( p_matrix, p_parm, 4 );
     --
   end gen_qrcode_matrix;
   --
@@ -2050,7 +2018,408 @@ THE SOFTWARE.
     --
     get_matrix( p_matrix );
     --
+    add_quiet( p_matrix, p_parm, 0 );
+    --
   end gen_aztec_matrix;
+  --
+  procedure gen_datamatrix_matrix( p_val varchar2 character set any_cs
+                                 , p_parm varchar2
+                                 , p_matrix out tp_matrix
+                                 )
+  is
+    l_val raw(32767);
+    l_ecc       tp_bits;
+    l_stream    tp_bits;
+    l_block     tp_bits;
+    l_block_ecc tp_bits;
+    l_chr pls_integer;
+    l_idx pls_integer;
+    l_len pls_integer;
+    l_tmp pls_integer;
+    l_mx  pls_integer;
+    l_my  pls_integer;
+    l_bc  pls_integer;
+    l_ds  pls_integer;
+    l_es  pls_integer;
+    l_data tp_matrix;
+    type tp_config is table of pls_integer;
+    l_config tp_config;
+    procedure get_config( p_config out tp_config, p_needed pls_integer, p_parm varchar2 )
+    is
+      type tp_dm_config is table of tp_config;
+      l_dm_config tp_dm_config;
+      l_idx pls_integer;
+    begin
+      l_dm_config := tp_dm_config
+                       ( tp_config( 1, 10, 10, 1, 1, 5, 1, 3 )
+                       , tp_config( 1, 12, 12, 1, 1, 7, 1, 5 )
+                       , tp_config( 2, 8, 18, 1, 1, 7, 1, 5 )
+                       , tp_config( 1, 14, 14, 1, 1, 10, 1, 8 )
+                       , tp_config( 2, 8, 32, 1, 2, 11, 1, 10 )
+                       , tp_config( 1, 16, 16, 1, 1, 12, 1, 12 )
+                       , tp_config( 2, 12, 26, 1, 1, 14, 1, 16 )
+                       , tp_config( 1, 18, 18, 1, 1, 14, 1, 18 )
+                       , tp_config( 1, 20, 20, 1, 1, 18, 1, 22 )
+                       , tp_config( 2, 12, 36, 1, 2, 18, 1, 22 )
+                       , tp_config( 1, 22, 22, 1, 1, 20, 1, 30 )
+                       , tp_config( 2, 16, 36, 1, 2, 24, 1, 32 )
+                       , tp_config( 1, 24, 24, 1, 1, 24, 1, 36 )
+                       , tp_config( 1, 26, 26, 1, 1, 28, 1, 44 )
+                       , tp_config( 2, 16, 48, 1, 2, 28, 1, 49 )
+                       , tp_config( 1, 32, 32, 2, 2, 36, 1, 62 )
+                       , tp_config( 1, 36, 36, 2, 2, 42, 1, 86 )
+                       , tp_config( 1, 40, 40, 2, 2, 48, 1, 114 )
+                       , tp_config( 1, 44, 44, 2, 2, 56, 1, 144 )
+                       , tp_config( 1, 48, 48, 2, 2, 68, 1, 174 )
+                       , tp_config( 1, 52, 52, 2, 2, 84, 2, 204 )
+                       , tp_config( 1, 64, 64, 4, 4, 112, 2, 280 )
+                       , tp_config( 1, 72, 72, 4, 4, 144, 4, 368 )
+                       , tp_config( 1, 80, 80, 4, 4, 192, 4, 456 )
+                       , tp_config( 1, 88, 88, 4, 4, 224, 4, 576 )
+                       , tp_config( 1, 96, 96, 4, 4, 272, 4, 696 )
+                       , tp_config( 1, 104, 104, 4, 4, 336, 6, 816 )
+                       , tp_config( 1, 120, 120, 6, 6, 408, 6, 1050 )
+                       , tp_config( 1, 132, 132, 6, 6, 496, 8, 1304 )
+                       , tp_config( 1, 144, 144, 6, 6, 620, 10, 1558 ) );
+      l_idx := l_dm_config.first;
+      loop
+        exit when l_idx is null;
+        if l_dm_config( l_idx )( 8 ) >= p_needed
+        then
+          p_config := l_dm_config( l_idx );
+          exit;
+        end if;
+        l_idx := l_dm_config.next( l_idx );
+      end loop;
+      l_dm_config.delete;
+    end;
+  function hextobits( p_x varchar2 )
+  return tp_bits
+  is
+    rv tp_bits;
+  begin
+    for i in 0 .. length( p_x ) / 2 - 1
+    loop
+      rv( i ) := to_number( substr( p_x, i * 2 + 1, 2 ), 'xx' );
+    end loop;
+    return rv;
+  end;
+  function bitstohex( p_x tp_bits )
+  return varchar2
+  is
+    rv varchar2(32000);
+  begin
+    for i in p_x.first .. p_x.last
+    loop
+      rv := rv || to_char( p_x(i), 'fm0X' );
+    end loop;
+    return rv;
+  end;
+  --
+  procedure place( p_stream  tp_bits
+                 , p_numrows pls_integer
+                 , p_numcols pls_integer
+                 , p_data out tp_matrix
+                 )
+  is
+    l_pos pls_integer;
+    l_row pls_integer;
+    l_col pls_integer;
+    --
+    procedure module( p_row pls_integer
+                    , p_col pls_integer
+                    , p_val pls_integer
+                    , p_bit pls_integer
+                    )
+    is
+      l_row pls_integer := p_row;
+      l_col pls_integer := p_col;
+    begin
+      if l_row < 0
+      then
+        l_row := l_row + p_numrows;
+        l_col := l_col + 4 - mod( p_numrows + 4, 8 );
+      end if;
+      if l_col < 0
+      then
+        l_col := l_col + p_numcols;
+        l_row := l_row + 4 - mod( p_numcols + 4, 8 );
+      end if;
+      p_data( l_col )( l_row ) := sign( bitand( p_val, power( 2, 8 - p_bit ) ) );
+    end;
+    --
+    procedure utah( p_row pls_integer
+                  , p_col pls_integer
+                  , p_val pls_integer
+                  )
+    is
+    begin
+      module( p_row - 2, p_col - 2, p_val, 1);
+      module( p_row - 2, p_col - 1, p_val, 2);
+      module( p_row - 1, p_col - 2, p_val, 3);
+      module( p_row - 1, p_col - 1, p_val, 4);
+      module( p_row - 1, p_col, p_val, 5);
+      module( p_row, p_col - 2, p_val, 6);
+      module( p_row, p_col - 1, p_val, 7);
+      module( p_row, p_col, p_val, 8);
+    end;
+    --
+    procedure corner1( p_val pls_integer )
+    is
+    begin
+      module( p_numrows - 1, 0, p_val, 1);
+      module( p_numrows - 1, 1, p_val, 2);
+      module( p_numrows - 1, 2, p_val, 3);
+      module( 0, p_numcols - 2, p_val, 4);
+      module( 0, p_numcols - 1, p_val, 5);
+      module( 1, p_numcols - 1, p_val, 6);
+      module( 2, p_numcols - 1, p_val, 7);
+      module( 3, p_numcols - 1, p_val, 8);
+    end;
+    --
+    procedure corner2( p_val pls_integer )
+    is
+    begin
+      module( p_numrows - 3, 0, p_val, 1);
+      module( p_numrows - 2, 0, p_val, 2);
+      module( p_numrows - 1, 0, p_val, 3);
+      module( 0, p_numcols - 4, p_val, 4);
+      module( 0, p_numcols - 3, p_val, 5);
+      module( 0, p_numcols - 2, p_val, 6);
+      module( 0, p_numcols - 1, p_val, 7);
+      module( 1, p_numcols - 1, p_val, 8);
+    end;
+    --
+    procedure corner3( p_val pls_integer )
+    is
+    begin
+      module( p_numrows - 3, 0, p_val, 1);
+      module( p_numrows - 2, 0, p_val, 2);
+      module( p_numrows - 1, 0, p_val, 3);
+      module( 0, p_numcols - 2, p_val, 4);
+      module( 0, p_numcols - 1, p_val, 5);
+      module( 1, p_numcols - 1, p_val, 6);
+      module( 2, p_numcols - 1, p_val, 7);
+      module( 3, p_numcols - 1, p_val, 8);
+    end;
+    --
+    procedure corner4( p_val pls_integer )
+    is
+    begin
+      module( p_numrows - 1, 0, p_val, 1);
+      module( p_numrows - 1, p_numcols - 1, p_val, 2);
+      module( 0, p_numcols - 3, p_val, 3);
+      module( 0, p_numcols - 2, p_val, 4);
+      module( 0, p_numcols - 1, p_val, 5);
+      module( 1, p_numcols - 3, p_val, 6);
+      module( 1, p_numcols - 2, p_val, 7);
+      module( 1, p_numcols - 1, p_val, 8);
+    end;
+  begin
+    l_pos := 0;
+    l_row := 4;
+    l_col := 0;
+    loop
+      if l_row = p_numrows and l_col = 0
+      then
+        corner1( p_stream( l_pos ) );
+        l_pos := l_pos + 1;
+      end if;
+      if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 4 ) != 0
+      then
+        corner2( p_stream( l_pos ) );
+        l_pos := l_pos + 1;
+      end if;
+      if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 8 ) = 4
+      then
+        corner3( p_stream( l_pos ) );
+        l_pos := l_pos + 1;
+      end if;
+      if l_row = p_numrows + 4 and l_col = 2 and mod( p_numcols, 8 ) = 0
+      then
+        corner4( p_stream( l_pos ) );
+        l_pos := l_pos + 1;
+      end if;
+      --
+      loop
+        if l_row < p_numrows and l_col >= 0 and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+        then
+--dbms_output.put_line( 'up: ' || l_row || ' ' || l_col || ' ' || l_pos );
+          utah( l_row, l_col, p_stream( l_pos ) );
+          l_pos := l_pos + 1;
+        end if;
+        l_row := l_row - 2;
+        l_col := l_col + 2;
+        exit when l_row < 0 or l_col >= p_numcols;
+      end loop;
+      l_row := l_row + 1;
+      l_col := l_col + 3;
+      --
+      loop
+        if l_row >= 0 and l_col < p_numcols and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+        then
+--dbms_output.put_line( 'down: ' || l_row || ' ' || l_col || ' ' || l_pos );
+          utah( l_row, l_col, p_stream( l_pos ) );
+          l_pos := l_pos + 1;
+        end if;
+        l_row := l_row + 2;
+        l_col := l_col - 2;
+        exit when l_row >= p_numrows or l_col < 0;
+      end loop;
+      l_row := l_row + 3;
+      l_col := l_col + 1;
+      --
+      exit when l_row >= p_numrows and l_col >= p_numcols;
+    end loop;
+--dbms_output.put_line( 'pos: ' || l_pos );
+    --
+    if not ( p_data.exists( p_numcols - 1 ) and p_data( p_numcols - 1 ).exists( p_numrows - 1 ) )
+    then
+      p_data( p_numcols - 1 )( p_numrows - 1 ) := 1;
+      p_data( p_numcols - 1 )( p_numrows - 2 ) := 0;
+      p_data( p_numcols - 2 )( p_numrows - 1 ) := 0;
+      p_data( p_numcols - 2 )( p_numrows - 2 ) := 1;
+    end if;
+  end place;
+  --
+  begin
+    if (   (   isnchar( p_val )
+           and utl_i18n.raw_to_nchar( utl_i18n.string_to_raw( p_val, 'US7ASCII' ), 'US7ASCII' ) = p_val
+       )
+       or (   not isnchar( p_val )
+          and utl_i18n.raw_to_char( utl_i18n.string_to_raw( p_val, 'US7ASCII' ), 'US7ASCII' ) = p_val
+          )
+       )
+    then
+      l_val := utl_i18n.string_to_raw( p_val, 'US7ASCII' );
+    else
+      l_stream( 0 ) := 241; --Extended Channel Interpretation character
+      l_stream( 1 ) := 27;  -- UTF-8 + 1
+      l_val := utl_i18n.string_to_raw( p_val, 'AL32UTF8' );
+    end if;
+    l_len := nvl( utl_raw.length( l_val ), 0 );
+    l_idx := 1;
+    loop
+      exit when l_idx > l_len;
+      l_chr := to_number( utl_raw.substr( l_val, l_idx, 1 ), 'XX' );
+      if l_chr < 128
+      then
+        if l_chr between 48 and 57
+          and l_idx < l_len
+          and utl_raw.substr( l_val, l_idx + 1, 1 ) between '30' and '39'
+        then
+          l_tmp := to_number( utl_i18n.raw_to_char(utl_raw.substr( l_val, l_idx, 2 ), 'US7ASCII' ) );
+          l_stream( l_stream.count ) := 130 + l_tmp;
+          l_idx := l_idx + 1;
+        else
+          l_stream( l_stream.count ) := l_chr + 1;
+        end if;
+      else
+        l_stream( l_stream.count ) := 235;  -- set high bit for next character
+        l_stream( l_stream.count ) := l_chr - 127;
+      end if;
+      l_idx := l_idx + 1;
+    end loop;
+    --
+   get_config( l_config, l_stream.count, p_parm );
+dbms_output.put_line( l_stream.count || ' ' || l_config( 8 ) || ' ' || bitstohex( l_stream ) );
+dbms_output.put_line( case l_config( 1 )
+                        when 2 then 'Rectangular'
+                        else 'Square'
+                      end || ' Symbol: '
+|| 'data region ' || ( l_config( 3 ) / l_config( 5 ) - 2 ) || 'x' || ( l_config( 2 ) / l_config( 4 ) - 2 )
+|| ', symbol size ' || l_config( 3 ) || 'x' || l_config( 2 )
+|| ', symbol data size ' || ( l_config( 3 ) - 2 * l_config( 5 ) ) || 'x' || ( l_config( 2 ) - 2 * l_config( 4 ) )
+|| ', codewords ' || l_config( 8 ) || '+' || l_config( 6 ) );
+    if l_stream.count < nvl( l_config( 8 ), 0 )
+    then
+      l_stream( l_stream.count ) := 129;  -- End of message
+      while l_stream.count < l_config( 8 ) loop
+        l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 253 ) + 1;
+        l_stream( l_stream.count ) := mod( 129 + l_tmp, 254 );  -- 253-state padding
+      end loop;
+    end if;
+ dbms_output.put_line( bitstohex( l_stream ) );
+    if l_config( 7 ) = 1
+    then
+      l_ecc := reed_solomon( l_stream, 301, 256, l_config( 6 ) );
+    else
+      l_bc := l_config( 7 );
+      l_ds := l_config( 8 ) / l_bc;
+      l_es := l_config( 6 ) / l_bc;
+      for b in 0 .. l_bc - 1
+      loop
+        if l_bc = 10 and b = 8
+        then
+          l_ds := 155;
+        end if;
+        l_block.delete;
+        for i in 0 .. l_ds - 1
+        loop
+          l_block( i ) := l_stream( b + i * l_bc );
+        end loop;
+        l_block_ecc := reed_solomon( l_block, 301, 256, l_es );
+        for i in 0 .. l_es - 1
+        loop
+          l_ecc( b + i * l_bc ) := l_block_ecc( i );
+        end loop;
+      end loop;
+    end if;
+      for i in l_ecc.first .. l_ecc.last
+      loop
+        l_stream( l_stream.count ) := l_ecc( i );
+      end loop;
+dbms_output.put_line( bitstohex( l_stream ) );
+    --
+    place( l_stream
+         , l_config( 2 ) - 2 * l_config( 4 )
+         , l_config( 3 ) - 2 * l_config( 5 )
+         , l_data
+         );
+    --
+    l_my := 0;
+    for y in 0 .. l_config( 2 ) - 2 * l_config( 4 ) - 1
+    loop
+      if mod( y, l_config( 2 ) / l_config( 4 ) - 2 ) = 0
+      then
+        for x in 0 .. l_config( 3 ) - 1
+        loop
+          p_matrix( x )( l_my ) := 1 - mod( x, 2 );
+        end loop;
+        l_my := l_my + 1;
+      end if;
+      l_mx := 0;
+      for x in 0 .. l_config( 3 ) - 2 * l_config( 5 ) - 1
+      loop
+        if mod( x, l_config( 3 ) / l_config( 5 ) - 2 ) = 0
+        then
+          p_matrix( l_mx )( l_my ) := 1;
+          l_mx := l_mx + 1;
+        end if;
+        p_matrix( l_mx )( l_my ) := l_data( x )( y );
+        l_mx := l_mx + 1;
+        if mod( x + 1, l_config( 3 ) / l_config( 5 ) - 2 ) = 0
+        then
+          p_matrix( l_mx )( l_my ) := 1 - mod( y, 2 );
+          l_mx := l_mx + 1;
+        end if;
+      end loop;
+      l_my := l_my + 1;
+      if mod( y + 1, l_config( 2 ) / l_config( 4 ) - 2 ) = 0
+      then
+        for x in 0 .. l_config( 3 ) - 1
+        loop
+          p_matrix( x )( l_my ) := 1;
+        end loop;
+        l_my := l_my + 1;
+      end if;
+    end loop;
+    --
+    l_data.delete;
+    --
+    add_quiet( p_matrix, p_parm, 2 );
+    --
+  end gen_datamatrix_matrix;
   --
   procedure gen_code128( p_val varchar2 character set any_cs
                        , p_parm varchar2
@@ -2415,7 +2784,7 @@ THE SOFTWARE.
         for j in 1 .. 7
         loop
           t_fnt := utl_raw.concat( t_fnt
-                                 , case when bitand( t_line, power( 2, j ) ) = 0 then 'FF' else '00' end
+                                 , case when bitand( t_line, power( 2, j ) ) = 0 then '01' else '00' end
                                  );
         end loop;
       end loop;
@@ -2466,12 +2835,49 @@ THE SOFTWARE.
         for j in reverse 0 .. 7
         loop
           t_fnt := utl_raw.concat( t_fnt
-                                 , case when bitand( t_line, power( 2, j ) ) = 0 then 'FF' else '00' end
+                                 , case when bitand( t_line, power( 2, j ) ) = 0 then '01' else '00' end
                                  );
         end loop;
       end loop;
     end loop;
     return t_fnt;
+  end;
+  --
+  function to_png_px( p_val tp_bar_row, p_scale number := 1 )
+  return varchar2
+  is
+    l_rv varchar2(4000);
+    l_w pls_integer;
+  begin
+    for i in p_val.first .. p_val.last
+    loop
+      l_w := round( abs( p_val( i ) ) * p_scale );
+      l_rv := l_rv || case when p_val( i ) > 0
+                            then rpad( '00', 2 * l_w, '00' )
+                            else rpad( '01', 2 * l_w, '01' )
+                          end;
+    end loop;
+    return l_rv;
+  end;
+  --
+  function font_px( p_fnt raw
+                  , p_fh pls_integer
+                  , p_fw pls_integer
+                  , p_idx pls_integer
+                  , p_l pls_integer
+                  , p_scale number
+                  )
+  return varchar2
+  is
+    l_px varchar2(100);
+    l_br tp_bar_row := tp_bar_row();
+  begin
+    for c in 1 .. p_fw
+    loop
+      l_px := utl_raw.substr( p_fnt, ( p_idx * p_fh + p_l ) * p_fw + c, 1 );
+      l_br := l_br multiset union tp_bar_row( 1 - 2 * sign( l_px ) );
+    end loop;
+    return to_png_px( l_br, p_scale );
   end;
   --
   function png_bar( p_row in out nocopy tp_bar_row
@@ -2484,44 +2890,36 @@ THE SOFTWARE.
     l_dat blob;
     c_human_sep constant number := 2;
     c_bearer    constant number := 4;
-    l_bw pls_integer;
-    l_line raw(32767);
+    l_scale number := 1;
+    l_line varchar2(32767);
     l_height number;
     l_width number;
     l_fnt raw(32767);
-    l_font_height pls_integer;
-    l_pre    pls_integer;
-    l_post   pls_integer;
+    l_fh   pls_integer;
+    l_fw   pls_integer;
+    l_pre  pls_integer;
+    l_post pls_integer;
   begin
     if nvl( p_height, 0 ) <= 0
     then
       return null;
     end if;
     --
-    l_line := '00'; -- filter type None
-    l_width := 0;
-    l_height := p_height;
-    for c in 1 .. p_row.count
-    loop
-      l_bw := round( p_row( c ) );
-      if l_bw > 0
-      then
-        l_line := utl_raw.concat( l_line, utl_raw.copies( '00', l_bw ) );
-      else
-        l_line := utl_raw.concat( l_line, utl_raw.copies( 'FF', - l_bw ) );
-      end if;
-      l_width := l_width + abs( l_bw );
-    end loop;
+    l_scale := nvl( check_int( p_parm, 'scale', 10 ), l_scale );
+    --
+    l_height := p_height * l_scale;
+    l_line := '00' || to_png_px( p_row, l_scale ); -- filter type None
+    l_width := ( length( l_line ) - 2 ) / 2;
     --
     dbms_lob.createtemporary( l_dat, true, dbms_lob.call );
     --
     if check_pos( p_parm, 'bearer' )
     then
-      for i in 1 .. c_bearer
+      for i in 1 .. c_bearer * l_scale
       loop
         dbms_lob.writeappend( l_dat
                             , l_width + 1
-                            , utl_raw.concat( '00', utl_raw.copies( '0f', l_width ) )
+                            , '00' || to_png_px( tp_bar_row( l_width ) )
                             );
       end loop;
     end if;
@@ -2533,39 +2931,41 @@ THE SOFTWARE.
     --
     if check_pos( p_parm, 'bearer' )
     then
-      for i in 1 .. c_bearer
+      for i in 1 .. c_bearer * l_scale
       loop
         dbms_lob.writeappend( l_dat
                             , l_width + 1
-                            , utl_raw.concat( '00', utl_raw.copies( '0f', l_width ) )
+                            , '00' || to_png_px( tp_bar_row( l_width ) )
                             );
       end loop;
     end if;
     --
     l_fnt := cp1252_font;  -- 8x14
-    l_font_height := 14;
-    l_post := l_width - 8 * length( p_human );
+    l_fw := 8;
+    l_fh := 14;
+    l_post := l_width - l_fw * l_scale * length( p_human );
     l_pre :=  l_post / 2;
     l_post := l_post - l_pre;
-    for j in 0 .. 13
+    for j in 0 .. l_fh - 1
     loop
-      l_line := utl_raw.concat( '00' -- filter type None
-                              , utl_raw.copies( 'FF', l_pre )
-                              );
+      l_line := '00' || to_png_px( tp_bar_row( - l_pre ) );
       for c in 1 .. length( p_human )
       loop
-        l_line := utl_raw.concat( l_line
-                                , utl_raw.substr( l_fnt, ( ascii( substr( p_human, c ) ) * 14 + j ) * 8 + 1, 8 )
-                                );
+        l_line := l_line || font_px( l_fnt, l_fh, l_fw, ascii( substr( p_human, c ) ), j, l_scale );
       end loop;
-      l_line := utl_raw.concat( l_line
-                              , utl_raw.copies( 'FF', l_post )
-                              );
-      dbms_lob.writeappend( l_dat, l_width + 1, l_line );
+      l_line := l_line || to_png_px( tp_bar_row( - l_post ) );
+      for s in 1 .. l_scale
+      loop
+        dbms_lob.writeappend( l_dat, l_width + 1, l_line );
+        l_height := l_height + 1;
+      end loop;
     end loop;
-    dbms_lob.writeappend( l_dat, l_width + 1, utl_raw.concat( '00', utl_raw.copies( 'FF', l_width ) ) );
+    dbms_lob.writeappend( l_dat
+                        , l_width + 1
+                        , '00' || to_png_px( tp_bar_row( -l_width ) )
+                        );
     --
-    return generate_png( l_dat, l_width, l_height + l_font_height + 1 + 2 * c_bearer );
+    return generate_png( l_dat, l_width, l_height + l_fh + 1 + 2 * c_bearer * l_scale, p_parm );
   end png_bar;
   --
   function code39( p_val varchar2, p_parm varchar2 )
@@ -2605,22 +3005,25 @@ THE SOFTWARE.
   return raw
   is
     l_val varchar2(100);
-    t_dat raw(32767);
-    t_line raw(200);
-    t_height pls_integer := 55;
-    t_bar tp_ean_bars;
-    t_fnt raw(1000);
---
-    function add_bars( p_val varchar2, p_bar_index pls_integer )
-    return raw
+    l_mapping tp_mapping;
+    l_scale number := 1;
+    l_quiet tp_bar_row;
+    l_dat blob;
+    l_line varchar2(4000);
+    l_width pls_integer;
+    l_height pls_integer;
+    l_fnt raw(1000);
+    --
+    function add_bars( p_val varchar2, p_set pls_integer )
+    return varchar2
     is
     begin
-      return utl_raw.concat( t_bar( p_bar_index + ascii( substr( p_val, 1 ) ) - 48 )
-                           , t_bar( p_bar_index + ascii( substr( p_val, 2 ) ) - 48 )
-                           , t_bar( p_bar_index + ascii( substr( p_val, 3 ) ) - 48 )
-                           , t_bar( p_bar_index + ascii( substr( p_val, 4 ) ) - 48 )
-                           );
+      return to_png_px( l_mapping( p_set + substr( p_val, 1, 1 ) ), l_scale )
+          || to_png_px( l_mapping( p_set + substr( p_val, 2, 1 ) ), l_scale )
+          || to_png_px( l_mapping( p_set + substr( p_val, 3, 1 ) ), l_scale )
+          || to_png_px( l_mapping( p_set + substr( p_val, 4, 1 ) ), l_scale );
     end;
+    --
   begin
     --
     if ltrim( p_val, '1234567890' ) is not null or length( p_val ) > 8
@@ -2634,94 +3037,105 @@ THE SOFTWARE.
       l_val := p_val;
     end if;
     --
-    get_ean_bars( t_bar );
+    init_ean_digits( l_mapping );
+    l_quiet := tp_bar_row( -7 );
+    l_scale := nvl( check_int( p_parm, 'scale', 10 ), l_scale );
     --
-    t_line := '00'; -- filter type None
-    t_line := utl_raw.concat( t_line, utl_raw.copies( 'FF', 7 ) ); -- left quiet zone
+    l_line := '00'; -- filter type None
+    l_line := l_line || to_png_px( l_quiet, l_scale ); -- left quiet zone
+    l_line := l_line || to_png_px( l_mapping( 30 ), l_scale ); -- left guard
+    l_line := l_line || add_bars( substr( l_val, 1, 4 ), 0 );
+    l_line := l_line || to_png_px( l_mapping( 31 ), l_scale ); -- centre guard
+    l_line := l_line || add_bars( substr( l_val, 5, 4 ), 20 );
+    l_line := l_line || to_png_px( l_mapping( 30 ), l_scale ); -- right guard
+    l_line := l_line || to_png_px( l_quiet, l_scale ); -- right quiet zone
     --
-    t_line := utl_raw.concat( t_line, '00FF00' ); -- Normal Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, add_bars( substr( l_val, 1, 4 ), 0 ) );
-    t_line := utl_raw.concat( t_line, 'FF00FF00FF' ); -- Centre Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, add_bars( substr( l_val, 5, 4 ), 20 ) );
-    t_line := utl_raw.concat( t_line, '00FF00' ); -- Normal Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, utl_raw.copies( 'FF', 7 ) ); -- right quiet zone
---
-    for i in 1 .. t_height
+    l_height := 55 * l_scale;
+    l_width := ( length( l_line ) - 2 ) / 2;
+    dbms_lob.createtemporary( l_dat, true, dbms_lob.call );
+    for i in 1 .. l_height
     loop
-      t_dat := utl_raw.concat( t_dat, t_line );
+      dbms_lob.writeappend( l_dat, l_width + 1, l_line );
     end loop;
     --
-    t_fnt := number_font;
-    t_dat := utl_raw.concat( t_dat, '00' ); -- filter type None
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 ) ); -- left quiet zone
-    t_dat := utl_raw.concat( t_dat, '00FF00' ); -- Normal Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 * 4) );
-    t_dat := utl_raw.concat( t_dat, 'FF00FF00FF' ); -- Centre Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 * 4) );
-    t_dat := utl_raw.concat( t_dat, '00FF00' ); -- Normal Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 ) ); -- right quiet zone
+    l_fnt := number_font;
+    l_line :=    '00' -- filter type None
+              || to_png_px( l_quiet, l_scale ) -- left quiet zone
+              || to_png_px( l_mapping( 30 ), l_scale ) -- left guard
+              || to_png_px( tp_bar_row( -7 * 4 ), l_scale ) -- 4 numbers
+              || to_png_px( l_mapping( 31 ), l_scale ) -- centre guard
+              || to_png_px( tp_bar_row( -7 * 4 ), l_scale ) -- 4 numbers
+              || to_png_px( l_mapping( 30 ), l_scale ) -- right guard
+              || to_png_px( l_quiet, l_scale ); -- right quiet zone
+    dbms_lob.writeappend( l_dat, l_width + 1, l_line );
+    --
     for j in 0 .. 8
     loop
-      t_dat := utl_raw.concat( t_dat, '00' ); -- filter type None
-      t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( 90 + j ) * 7 + 1, 7 ) ); -- left quiet zone
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then '00FF00' else 'FFFFFF' end ); -- Normal Guard Bar Pattern
+      l_line := '00'; -- filter type None
+      l_line := l_line || font_px( l_fnt, 9, 7, 10, j, l_scale ); -- <
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 30 ) else tp_bar_row( -3 ) end, l_scale ); -- left guard
       for c in 1 .. 4
       loop
-        t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( ( ascii( substr( l_val, c ) ) - 48 ) * 9 + j ) * 7 + 1, 7 ) );
+        l_line := l_line || font_px( l_fnt, 9, 7, substr( l_val, c, 1 ), j, l_scale );
       end loop;
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then 'FF00FF00FF' else 'FFFFFFFFFF' end ); -- Centre Guard Bar Pattern
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 31 ) else tp_bar_row( -5 ) end, l_scale ); -- centre guard
       for c in 5 .. 8
       loop
-        t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( ( ascii( substr( l_val, c ) ) - 48 ) * 9 + j ) * 7 + 1, 7 ) );
+        l_line := l_line || font_px( l_fnt, 9, 7, substr( l_val, c, 1 ), j, l_scale );
       end loop;
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then '00FF00' else 'FFFFFF' end ); -- Normal Guard Bar Pattern
-      t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( 99 + j ) * 7 + 1, 7 ) ); -- right quiet zone
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 30 ) else tp_bar_row( -3 ) end, l_scale ); -- right guard
+      l_line := l_line || font_px( l_fnt, 9, 7, 11, j, l_scale ); -- >
+      for s in 1 .. l_scale
+      loop
+        dbms_lob.writeappend( l_dat, l_width + 1, l_line );
+        l_height := l_height + 1;
+      end loop;
     end loop;
     --
-    return generate_png( t_dat, 81, t_height + 10 );
+    return generate_png( l_dat, l_width, l_height + 1, p_parm );
   end ean8;
   --
   function ean13( p_val varchar2, p_parm varchar2 )
   return raw
   is
     l_val varchar2(100);
-    t_dat raw(32767);
-    t_line raw(200);
-    t_height pls_integer := 69;
-    type tp_bar is table of raw(7) index by pls_integer;
-    t_bar tp_ean_bars;
-    t_fnt raw(1000);
+    l_mapping tp_mapping;
+    l_scale number := 1;
+    l_dat blob;
+    l_line varchar2(4000);
+    l_width pls_integer;
+    l_height pls_integer := 69;
+    l_fnt raw(1000);
     --
-    function add_bars( p_val varchar2, p_check varchar2 := null )
-    return raw
+    function add_bars( p_val varchar2, p_first pls_integer := null )
+    return varchar2
     is
-      type tp_bar_index is table of pls_integer index by pls_integer;
-      t_bar_index tp_bar_index;
-      t_check_number pls_integer;
+      l_rv varchar2(4000);
+      l_set pls_integer;
     begin
-      if p_check is null
+      if p_first is null
       then
         for i in 1 .. 6
         loop
-          t_bar_index(i) := 20;
+          l_rv := l_rv || to_png_px( l_mapping( 20 + substr( p_val, i, 1 ) ), l_scale );
         end loop;
       else
-        t_check_number := ascii( p_check ) - 48;
-        t_bar_index(1) := 0;
-        t_bar_index(2) := case when t_check_number < 4 then 0 else 10 end;
-        t_bar_index(3) := case when t_check_number in ( 0, 4, 7, 8 ) then 0 else 10 end;
-        t_bar_index(4) := case when t_check_number in ( 0, 1, 4, 5, 9 ) then 0 else 10 end;
-        t_bar_index(5) := case when t_check_number in ( 0, 2, 5, 6, 7 ) then 0 else 10 end;
-        t_bar_index(6) := case when t_check_number in ( 0, 3, 6, 8, 9 ) then 0 else 10 end;
+        l_set := 0;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 1, 1 ) ), l_scale );
+        l_set := case when p_first < 4 then 0 else 10 end;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 2, 1 ) ), l_scale );
+        l_set := case when p_first in ( 0, 4, 7, 8 ) then 0 else 10 end;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 3, 1 ) ), l_scale );
+        l_set := case when p_first in ( 0, 1, 4, 5, 9 ) then 0 else 10 end;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 4, 1 ) ), l_scale );
+        l_set := case when p_first in ( 0, 2, 5, 6, 7 ) then 0 else 10 end;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 5, 1 ) ), l_scale );
+        l_set := case when p_first in ( 0, 3, 6, 8, 9 ) then 0 else 10 end;
+        l_rv := l_rv|| to_png_px( l_mapping( l_set + substr( p_val, 6, 1 ) ), l_scale );
       end if;
-      return utl_raw.concat( t_bar( t_bar_index(1) + ascii( substr( p_val, 1 ) ) - 48 )
-                           , t_bar( t_bar_index(2) + ascii( substr( p_val, 2 ) ) - 48 )
-                           , t_bar( t_bar_index(3) + ascii( substr( p_val, 3 ) ) - 48 )
-                           , t_bar( t_bar_index(4) + ascii( substr( p_val, 4 ) ) - 48 )
-                           , t_bar( t_bar_index(5) + ascii( substr( p_val, 5 ) ) - 48 )
-                           , t_bar( t_bar_index(6) + ascii( substr( p_val, 6 ) ) - 48 )
-                           );
+      return l_rv;
     end;
+    --
   begin
     --
     if ltrim( p_val, '1234567890' ) is not null or length( p_val ) > 13
@@ -2735,54 +3149,63 @@ THE SOFTWARE.
       l_val := p_val;
     end if;
     --
-    get_ean_bars( t_bar );
+    init_ean_digits( l_mapping );
     --
-    t_line := '00'; -- filter type None
-    t_line := utl_raw.concat( t_line, utl_raw.copies( 'FF', 11 ) ); -- left quiet zone
-    t_line := utl_raw.concat( t_line, '00FF00' ); -- Normal Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, add_bars( substr( l_val, 2, 6 ), l_val ) );
-    t_line := utl_raw.concat( t_line, 'FF00FF00FF' ); -- Centre Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, add_bars( substr( l_val, 8, 6 ) ) );
-    t_line := utl_raw.concat( t_line, '00FF00' ); -- Normal Guard Bar Pattern
-    t_line := utl_raw.concat( t_line, utl_raw.copies( 'FF', 7 ) ); -- right quiet zone
+    l_scale := nvl( check_int( p_parm, 'scale', 10 ), l_scale );
     --
-    for i in 1 .. t_height
+    l_line := '00'; -- filter type None
+    l_line := l_line || to_png_px( tp_bar_row( -11 ), l_scale ); -- left quiet zone
+    l_line := l_line || to_png_px( l_mapping( 30 ), l_scale ); -- left guard
+    l_line := l_line || add_bars( substr( l_val, 2, 6 ), substr( l_val, 1, 1 ) );
+    l_line := l_line || to_png_px( l_mapping( 31 ), l_scale ); -- centre guard
+    l_line := l_line || add_bars( substr( l_val, 8, 6 ) );
+    l_line := l_line || to_png_px( l_mapping( 30 ), l_scale ); -- right guard
+    l_line := l_line || to_png_px( tp_bar_row( -7 ), l_scale ); -- right quiet zone
+    --
+    l_height := 69 * l_scale;
+    l_width := ( length( l_line ) - 2 ) / 2;
+    dbms_lob.createtemporary( l_dat, true, dbms_lob.call );
+    for i in 1 .. l_height
     loop
-      t_dat := utl_raw.concat( t_dat, t_line );
+      dbms_lob.writeappend( l_dat, l_width + 1, l_line );
     end loop;
     --
-    t_fnt := number_font;
-    t_dat := utl_raw.concat( t_dat, '00' ); -- filter type None
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 11 ) ); -- left quiet zone
-    t_dat := utl_raw.concat( t_dat, '00FF00' ); -- Normal Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 * 6) );
-    t_dat := utl_raw.concat( t_dat, 'FF00FF00FF' ); -- Centre Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 * 6) );
-    t_dat := utl_raw.concat( t_dat, '00FF00' ); -- Normal Guard Bar Pattern
-    t_dat := utl_raw.concat( t_dat, utl_raw.copies( 'FF', 7 ) ); -- right quiet zone
+    l_fnt := number_font;
+    l_line :=    '00' -- filter type None
+              || to_png_px( tp_bar_row( -11 ), l_scale ) -- left quiet zone
+              || to_png_px( l_mapping( 30 ), l_scale ) -- left guard
+              || to_png_px( tp_bar_row( -7 * 6 ), l_scale ) -- 6 numbers
+              || to_png_px( l_mapping( 31 ), l_scale ) -- centre guard
+              || to_png_px( tp_bar_row( -7 * 6 ), l_scale ) -- 6 numbers
+              || to_png_px( l_mapping( 30 ), l_scale ) -- right guard
+              || to_png_px( tp_bar_row( -7 ), l_scale ); -- right quiet zone
+    dbms_lob.writeappend( l_dat, l_width + 1, l_line );
     for j in 0 .. 8
     loop
-      t_dat := utl_raw.concat( t_dat, '00' ); -- filter type None
-      t_dat := utl_raw.concat( t_dat
-                             , 'FFFF'
-                             , utl_raw.substr( t_fnt, ( ( ascii( l_val ) - 48 ) * 9 + j ) * 7 + 1, 7 )
-                             , 'FFFF'
-                             ); -- left quiet zone
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then '00FF00' else 'FFFFFF' end ); -- Normal Guard Bar Pattern
+      l_line := '00'; -- filter type None
+      l_line := l_line || to_png_px( tp_bar_row( -2 ), l_scale ); -- left quiet zone
+      l_line := l_line || font_px( l_fnt, 9, 7, substr( l_val, 1, 1 ), j, l_scale );
+      l_line := l_line || to_png_px( tp_bar_row( -2 ), l_scale ); -- left quiet zone
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 30 ) else tp_bar_row( -3 ) end, l_scale ); -- left guard
       for c in 2 .. 7
       loop
-        t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( ( ascii( substr( l_val, c ) ) - 48 ) * 9 + j ) * 7 + 1, 7 ) );
+        l_line := l_line || font_px( l_fnt, 9, 7, substr( l_val, c, 1 ), j, l_scale );
       end loop;
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then 'FF00FF00FF' else 'FFFFFFFFFF' end ); -- Centre Guard Bar Pattern
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 31 ) else tp_bar_row( -5 ) end, l_scale ); -- centre guard
       for c in 8 .. 13
       loop
-        t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( ( ascii( substr( l_val, c ) ) - 48 ) * 9 + j ) * 7 + 1, 7 ) );
+        l_line := l_line || font_px( l_fnt, 9, 7, substr( l_val, c, 1 ), j, l_scale );
       end loop;
-      t_dat := utl_raw.concat( t_dat, case when j < 4 then '00FF00' else 'FFFFFF' end ); -- Normal Guard Bar Pattern
-      t_dat := utl_raw.concat( t_dat, utl_raw.substr( t_fnt, ( 99 + j ) * 7 + 1, 7 ) ); -- right quiet zone
+      l_line := l_line || to_png_px( case when j < 4 then l_mapping( 30 ) else tp_bar_row( -3 ) end, l_scale ); -- right guard
+      l_line := l_line || font_px( l_fnt, 9, 7, 11, j, l_scale ); -- >
+      for s in 1 .. l_scale
+      loop
+        dbms_lob.writeappend( l_dat, l_width + 1, l_line );
+        l_height := l_height + 1;
+      end loop;
     end loop;
     --
-    return generate_png( t_dat, 113, t_height + 10 );
+    return generate_png( l_dat, l_width, l_height + 1, p_parm );
   end ean13;
   --
   function png_matrix( p_matrix in out nocopy tp_matrix, p_parm varchar2 )
@@ -2791,31 +3214,25 @@ THE SOFTWARE.
     l_dat blob;
     l_line raw(32767);
     l_tmp varchar2(32767);
-    l_sz pls_integer;
+    l_hsz pls_integer;
+    l_vsz pls_integer;
     l_scale pls_integer := 4;
-    l_int   pls_integer;
   begin
     --
-    begin
-      l_int := trunc( to_number( xjv( p_parm, 'scale' ) ) );
-      if l_int between 1 and 20
-      then
-        l_scale := l_int;
-      end if;
-    exception when others then null;
-    end;
+    l_scale := nvl( check_int( p_parm, 'scale', 10 ), l_scale );
     --
-    l_sz := p_matrix.count;
     dbms_lob.createtemporary( l_dat, true, dbms_lob.call );
-    for i in 0 .. l_sz - 1
+    l_hsz := p_matrix.count;
+    l_vsz := p_matrix(1).count;
+    for r in 0 .. l_vsz - 1
     loop
       l_tmp := '00';
       l_line := null;
-      for j in 0 .. l_sz - 1
+      for c in 0 .. l_hsz - 1
       loop
-        l_tmp := l_tmp || case when p_matrix( j )( i ) > 0
+        l_tmp := l_tmp || case when p_matrix( c )( r ) > 0
                             then rpad( '00', l_scale * 2, '00' )
-                            else rpad( 'FF', l_scale * 2, 'FF' )
+                            else rpad( '01', l_scale * 2, '01' )
                           end;
       end loop;
       for j in 1 .. l_scale
@@ -2825,8 +3242,7 @@ THE SOFTWARE.
       dbms_lob.writeappend( l_dat, utl_raw.length( l_line ), l_line );
     end loop;
     p_matrix.delete;
-    l_sz := l_sz * l_scale;
-    return generate_png( l_dat, l_sz, l_sz );
+    return generate_png( l_dat, l_hsz * l_scale, l_vsz * l_scale, p_parm );
   end;
   --
   function qrcode( p_val varchar2 character set any_cs, p_parm varchar2 )
@@ -2837,7 +3253,7 @@ THE SOFTWARE.
     gen_qrcode_matrix( p_val, p_parm, l_matrix );
     return png_matrix( l_matrix, p_parm );
   end;
---
+  --
   function aztec( p_val varchar2 character set any_cs, p_parm varchar2 )
   return raw
   is
@@ -2846,7 +3262,16 @@ THE SOFTWARE.
     gen_aztec_matrix( p_val, p_parm, l_matrix );
     return png_matrix( l_matrix, p_parm );
   end;
---
+  --
+  function datamatrix( p_val varchar2 character set any_cs, p_parm varchar2 )
+  return raw
+  is
+    l_matrix tp_matrix;
+  begin
+    gen_datamatrix_matrix( p_val, p_parm, l_matrix );
+    return png_matrix( l_matrix, p_parm );
+  end;
+  --
   function barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
   return raw
   is
@@ -2879,29 +3304,19 @@ THE SOFTWARE.
            or upper( p_type ) like 'INTERLEAVED%'
         then
           return itf( p_val, p_parm );
+        elsif upper( p_type ) like '%DATA%'
+           or upper( p_type ) like '%MATRIX%'
+        then
+          return datamatrix( p_val, p_parm );
         end if;
       end if;
     exception
       when others
         then
  dbms_output.put_line( dbms_utility.format_error_stack );dbms_output.put_line( dbms_utility.format_error_backtrace );
-          null;
+          raise;
     end;
     return '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D4944415478DA63F8FF9FA11E00077D027EFDBCECEE0000000049454E44AE426082';
-  end;
---
-  procedure download_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
-  is
-    t_img raw(32767);
-  begin
-    t_img := barcode( p_val, p_type, p_parm );
-    htp.init;
-    owa_util.mime_header( 'image/png', false );
-    htp.p( 'Content-length: ' || utl_raw.length( t_img ) );
-    htp.p( 'Content-Disposition: : inline;' );
-    htp.p( 'Cache-Control: no-store, no-cache, must-revalidate' );
-    owa_util.http_header_close;
-    wpg_docload.download_file( p_blob => t_img );
   end;
 --
   function datauri_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
@@ -2911,26 +3326,6 @@ THE SOFTWARE.
     return 'data:image/png;base64,' || utl_raw.cast_to_varchar2( utl_encode.base64_encode( barcode( p_val, p_type, p_parm ) ) );
   end;
 --
-  procedure save_zip
-    ( p_zipped_blob blob
-    , p_dir varchar2
-    , p_filename varchar2
-    )
-  is
-    l_fh utl_file.file_type;
-    l_sz pls_integer := 32767;
-  begin
-    l_fh := utl_file.fopen( p_dir, p_filename, 'wb', 32767 );
-    if p_zipped_blob is not null
-    then
-      for i in 0 .. trunc( ( dbms_lob.getlength( p_zipped_blob ) - 1 ) / l_sz )
-      loop
-        utl_file.put_raw( l_fh, dbms_lob.substr( p_zipped_blob, l_sz, i * l_sz + 1 ), true );
-      end loop;
-    end if;
-    utl_file.fclose( l_fh );
-  end;
-  --
   function svg_to_char( p_val number, p_enclosed boolean := true )
   return varchar2
   is
@@ -2950,7 +3345,6 @@ THE SOFTWARE.
   return clob
   is
     l_marge pls_integer;
-    l_int   pls_integer;
     l_height number;
     l_width  number;
     l_tmp varchar2(1000);
@@ -2963,15 +3357,7 @@ THE SOFTWARE.
     l_fg_color   varchar2(100);
     l_font       varchar2(4000);
   begin
-    begin
-      l_marge := 2;
-      l_int := trunc( to_number( xjv( p_parm, 'marge' ) ) );
-      if l_int between 0 and 20
-      then
-        l_marge := l_int;
-      end if;
-    exception when others then null;
-    end;
+    l_marge := nvl( check_int( p_parm, 'marge', 20 ), 2 );
     --
     if p_size is not null
     then
@@ -2981,6 +3367,29 @@ THE SOFTWARE.
       l_width := p_width;
       l_height := p_height;
     end if;
+    --
+    begin
+      l_tmp := xjv( p_parm, 'width' );
+      if l_tmp is not null
+      then
+        l_svg_size := ' width=' || svg_to_char( l_tmp );
+      end if;
+      l_tmp := xjv( p_parm, 'height' );
+      if l_tmp is not null
+      then
+        l_svg_size := l_svg_size || ' height=' || svg_to_char( l_tmp );
+      end if;
+    exception when others then l_svg_size := null;
+    end;
+    begin
+      l_tmp := xjv( p_parm, 'size' );
+      if l_tmp is not null
+      then
+        l_svg_size := ' width=' || svg_to_char( l_tmp )
+                   || ' height=' || svg_to_char( l_tmp );
+      end if;
+    exception when others then l_svg_size := null;
+    end;
     --
     if p_font
     then
@@ -3020,20 +3429,6 @@ THE SOFTWARE.
                  svg_to_char( l_height + 2 * l_marge, false ) || '"';
     --
     begin
-      l_tmp := xjv( p_parm, 'width' );
-      if l_tmp is not null
-      then
-        l_svg_size := ' width=' || svg_to_char( l_tmp );
-      end if;
-      l_tmp := xjv( p_parm, 'height' );
-      if l_tmp is not null
-      then
-        l_svg_size := l_svg_size || ' height=' || svg_to_char( l_tmp );
-      end if;
-    exception when others then l_svg_size := null;
-    end;
-    --
-    begin
       l_tmp := xjv( p_parm, 'id' );
       if l_tmp is not null
       then
@@ -3059,153 +3454,41 @@ THE SOFTWARE.
          || ' y=' || svg_to_char( y ) || '/>';
   end;
   --
-  procedure guard_bar( p_svg in out varchar2, p_x in out number, p_h number )
-  is
-  begin
-    p_svg := p_svg || svg_rect( p_x, p_h, 1 );
-    p_x := p_x + 2;
-    p_svg := p_svg || svg_rect( p_x, p_h, 1 );
-    p_x := p_x + 1;
-  end;
-  --
-  procedure addon_guard_bar( p_svg in out varchar2
-                           , p_x in out number
-                           , p_y number
-                           , p_h number
-                           )
-  is
-  begin
-    p_svg := p_svg || svg_rect( p_x, p_h, 1, p_y );
-    p_x := p_x + 2;
-    p_svg := p_svg || svg_rect( p_x, p_h, 2, p_y );
-    p_x := p_x + 2;
-  end;
-  --
-  procedure delineator_bar( p_svg in out varchar2
-                          , p_x in out number
-                          , p_y number
-                          , p_h number
-                          )
-  is
-  begin
-    p_svg := p_svg || svg_rect( p_x + 1, p_h, 1, p_y );
-    p_x := p_x + 2;
-  end;
-  --
-  procedure digit_bar( p_svg in out varchar2
+  procedure ean_bar( p_svg in out varchar2
                      , p_x in out number
-                     , p_idx pls_integer
-                     , p_code pls_integer
+                     , p_bar tp_bar_row
                      , p_h number
                      , p_y number := 0
                      )
   is
-    l_ean_digit t_ean_digit;
+    l_w number;
   begin
-    l_ean_digit := g_ean_digits( p_idx );
-    if p_code = 1 -- number set A
-    then
-      p_x := p_x + l_ean_digit.w1;
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w2, p_y );
-      p_x := p_x + l_ean_digit.w2 + l_ean_digit.w3;
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w4, p_y );
-      p_x := p_x + l_ean_digit.w4;
-    elsif p_code = 2 -- number set B
-    then
-      p_x := p_x + l_ean_digit.w4;
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w3, p_y );
-      p_x := p_x + l_ean_digit.w3 + l_ean_digit.w2;
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w1, p_y );
-      p_x := p_x + l_ean_digit.w1;
-    elsif p_code = 3 -- number set C
-    then
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w1, p_y );
-      p_x := p_x + l_ean_digit.w1 + l_ean_digit.w2;
-      p_svg := p_svg || svg_rect( p_x, p_h, l_ean_digit.w3, p_y );
-      p_x := p_x + l_ean_digit.w3 + l_ean_digit.w4;
-    end if;
+    for i in p_bar.first .. p_bar.last
+    loop
+      l_w := p_bar( i );
+      if l_w > 0
+      then
+        p_svg := p_svg || svg_rect( p_x, p_h, l_w, p_y );
+      end if;
+      p_x := p_x + abs( l_w );
+    end loop;
   end;
   --
-  procedure svg_add_path( p_svg in out varchar2
-                        , p_x number
-                        , p_y number
-                        , p_scale1 number
-                        , p_scale2 number
-                        , p_d varchar2
-                        )
-  is
-  begin
-    p_svg := p_svg || '<g transform="translate('
-                   || svg_to_char( p_x, false ) || ','
-                   || svg_to_char( p_y, false ) || ') '
-                   || 'scale(' || svg_to_char( p_scale1, false ) || ', '
-                   || svg_to_char( p_scale2, false ) || ')">'
-                   || '<path d="' || p_d || '"/></g>';
-  end;
-  --
-  procedure less_human( p_svg in out varchar2
-                      , p_x in out number
-                      , p_y number
-                      , p_scale number
-                      )
-  is
-  begin
-    svg_add_path( p_svg, p_x, p_y, p_scale, p_scale
-                , 'M1175 0 v-185 l-900-660 l900-660 v-185 l-1175 845z' );
-    p_x := p_x + 7;
-  end;
-  --
-  procedure greater_human( p_svg in out varchar2
-                         , p_x in out number
-                         , p_y number
-                         , p_scale number
+  procedure greater_less_human( p_svg in out varchar2
+                              , p_x in out number
+                              , p_y number
+                              , p_greater boolean
                          )
   is
   begin
-    svg_add_path( p_svg, p_x, p_y, p_scale, p_scale
-                , 'M85 0 v-185 l900-660 l-900-660 v-185 l1175 845z' );
-    p_x := p_x + 7;
-  end;
-  --
-  procedure init_ean_digit( p1 number, p2 number, p3 number, p4 number, pd varchar2 )
-  is
-    l_idx pls_integer;
-  begin
-    l_idx := g_ean_digits.count;
-    g_ean_digits( l_idx ).w1 := p1;
-    g_ean_digits( l_idx ).w2 := p2;
-    g_ean_digits( l_idx ).w3 := p3;
-    g_ean_digits( l_idx ).w4 := p4;
-    g_ean_digits( l_idx ).d  := pd;
-  end;
-  --
-  procedure init_ean_digits
-  is
-  begin
-    g_ean_digits.delete;
-    init_ean_digit( 3, 2, 1, 1
-                  , 'M483 750q0 55 38.5 95t92.5 40q56 0 96 -40t40 -95q0 -56 -39.5 -95t-96.5 -39q-56 0 -93.5 38t-37.5 96zM616 1360q-141 0 -210.5 -152t-69.5 -463q0 -310 69.5 -462t210.5 -152q142 0 211.5 152t69.5 462q0 311 -69.5 463t-211.5 152zM616 1520q239 0 361.5 -196 t122.5 -579q0 -382 -122.5 -578t-361.5 -196t-361 196t-122 578q0 383 122 579t361 196z' ); -- 0
-    init_ean_digit( 2.0769, 1.9231, 2.0769, 0.9231
-                  , 'M270 170h314v1141l-338 -76v184l336 74h202v-1323h310v-170h-824v170z' ); -- 1
-    init_ean_digit( 2.0769, 0.9231, 2.0769, 1.9231
-                  , 'M373 170h686v-170h-907v170q187 197 327 348t193 213q100 122 135 197.5t35 154.5q0 125 -73.5 196t-201.5 71q-91 0 -191 -33t-212 -100v204q103 49 202.5 74t196.5 25q219 0 352.5 -116.5t133.5 -305.5q0 -96 -44.5 -192t-144.5 -212q-56 -65 -162.5 -180t-324.5 -344z' ); -- 2
-    init_ean_digit( 1, 4, 1, 1
-                  , 'M776 799q147 -39 225 -138.5t78 -248.5q0 -206 -138.5 -323.5t-383.5 -117.5q-103 0 -210 19t-210 55v201q102 -53 201 -79t197 -26q166 0 255 75t89 216q0 130 -89 206.5t-241 76.5h-154v166h154q139 0 217 61t78 170q0 115 -72.5 176.5t-206.5 61.5q-89 0 -184 -20 t-199 -60v186q121 32 215.5 48t167.5 16q218 0 348.5 -109.5t130.5 -290.5q0 -123 -68.5 -205t-199.5 -116z' ); -- 3
-    init_ean_digit( 1, 1, 3, 2
-                  , 'M735 1309l-471 -789h471v789zM702 1493h234v-973h199v-164h-199v-356h-201v356h-633v191z' ); -- 4
-    init_ean_digit( 1, 2, 3, 1
-                  , 'M207 1493h756v-170h-572v-367q43 16 86.5 23.5t87.5 7.5q232 0 368 -137t136 -371q0 -236 -142.5 -372t-389.5 -136q-119 0 -217.5 16t-176.5 48v205q92 -50 185 -74.5t190 -24.5q167 0 257.5 88t90.5 250q0 160 -93.5 249t-260.5 89q-81 0 -158 -18.5t-147 -55.5v750z' ); -- 5
-    init_ean_digit( 1, 1, 1, 4
-                  , 'M991 1460v-186q-63 37 -134 56.5t-148 19.5q-192 0 -291 -144.5t-99 -425.5q48 100 133 153.5t195 53.5q216 0 334.5 -132.5t118.5 -375.5q0 -242 -122 -375t-343 -133q-260 0 -381 186.5t-121 587.5q0 378 145.5 576.5t421.5 198.5q74 0 148 -15.5t143 -44.5zM631 829 q-129 0 -203 -93t-74 -257t74 -257t203 -93q134 0 202 88.5t68 261.5q0 174 -68 262t-202 88z' ); -- 6
-    init_ean_digit( 1.0769, 2.9231, 1.0769, 1.9231
-                  , 'M139 1493h940v-86l-534 -1407h-211l520 1323h-715v170z' ); -- 7
-    init_ean_digit( 1.0769, 1.9231, 1.0769, 2.9231
-                  , 'M616 709q-135 0 -208.5 -75.5t-73.5 -213.5t74.5 -214.5t207.5 -76.5q136 0 209.5 75.5t73.5 215.5q0 137 -74.5 213t-208.5 76zM440 793q-129 33 -201.5 123t-72.5 217q0 178 121 282.5t329 104.5'
-                 || 'q209 0 330 -104.5t121 -282.5q0 -127 -72.5 -217t-201.5 -123 q150 -33 229.5 -133t79.5 -259q0 -202 -129 -316t-357 -114t-356.5 113.5t-128.5 314.5q0 160 79.5 260.5t229.5 133.5zM367 1114'
-                 || 'q0 -120 64 -183t185 -63q122 0 186 63t64 183q0 122 -63.5 186t-186.5 64q-121 0 -185 -64.5t-64 -185.5' ); -- 8
-    init_ean_digit( 3, 1, 1, 2
-                  , 'M596 662q129 0 202.5 93t73.5 257t-73.5 257t-202.5 93q-134 0 -202 -88.5t-68 -261.5q0 -174 67.5 -262t202.5 -88zM236 31v186q63 -37 134 -56.5t148 -19.5q192 0 290.5 144.5t98.5 425.5'
-                 || 'q-47 -100 -132 -153.5t-195 -53.5q-216 0 -334.5 133t-118.5 377q0 241 121.5 373.5t343.5 132.5q260 0 381 -187t121 -588q0 -377 -145.5 -575.5t-422.5 -198.5q-73 0 -147 15.5t-143 44.5z' ); -- 9
+    p_x := p_x + case when p_greater then 0 else 7 end;
+    p_svg := p_svg || '<g transform="translate('
+                   || svg_to_char( p_x, false ) || ','
+                   || svg_to_char( p_y, false ) || ') scale('
+                   || case when not p_greater then '-' end
+                   || '1,1)"><path d="'
+                   || 'M0.6 0v-1l5.7-3.5l-5.7-3.5v-1l6.4 4 v1z"/></g>';
+    p_x := p_x + case when p_greater then 7 else 0 end;
   end;
   --
   function check_ean_val_add_checknr( p_val varchar2, p_len pls_integer )
@@ -3252,36 +3535,34 @@ THE SOFTWARE.
                     , p_val        varchar2
                     , p_x   in out number
                     , p_h          number
-                    , p_h1         number
                     , p_h2         number
-                    , p_scale      number
+                    , p_mapping    tp_mapping
                     )
   is
     l_v pls_integer;
   begin
-    addon_guard_bar( p_svg, p_x, p_h2, p_h );
+    ean_bar( p_svg, p_x, p_mapping( 33 ), p_h, p_h2 ); -- add-on guard bar
     l_v := mod( to_number( p_val ), 4 );
     svg_centered_text( p_svg, substr( p_val, 1, 1 ), 0, 7, p_x, p_h2, 75 );
-    digit_bar( p_svg, p_x, substr( p_val, 1, 1 ), case when l_v in ( 0, 1 ) then 1 else 2 end, p_h, p_h2 );
-    delineator_bar( p_svg, p_x, p_h2, p_h1 - 0.5 * p_h2 );
+    ean_bar( p_svg, p_x, p_mapping( case when l_v in ( 0, 1 ) then 0 else 10 end + substr( p_val, 1, 1 ) ), p_h, p_h2 );
+    ean_bar( p_svg, p_x, p_mapping( 34 ), p_h, p_h2 ); -- add-on delineator
     svg_centered_text( p_svg, substr( p_val, 2, 1 ), 0, 7, p_x, p_h2, 75 );
-    digit_bar( p_svg, p_x, substr( p_val, 2, 1 ), case when l_v in ( 0, 2 ) then 1 else 2 end, p_h, p_h2 );
-    greater_human( p_svg, p_x, p_h2, p_scale );
+    ean_bar( p_svg, p_x, p_mapping( case when l_v in ( 0, 2 ) then 0 else 10 end + substr( p_val, 2, 1 ) ), p_h, p_h2 );
+    greater_less_human( p_svg, p_x, p_h2, true );
   end ean2_svg;
   --
   procedure ean5_svg( p_svg in out varchar2
                     , p_val        varchar2
                     , p_x   in out number
                     , p_h          number
-                    , p_h1         number
                     , p_h2         number
-                    , p_scale      number
+                    , p_mapping    tp_mapping
                     )
   is
     l_code pls_integer;
     l_v pls_integer := 0;
   begin
-    addon_guard_bar( p_svg, p_x, p_h2, p_h );
+    ean_bar( p_svg, p_x, p_mapping( 33 ), p_h, p_h2 ); -- add-on guard bar
     for i in 1 .. 5
     loop
       l_v := l_v + to_number( substr( p_val, i, 1 ) )
@@ -3290,20 +3571,18 @@ THE SOFTWARE.
     l_v := mod( l_v, 10 );
     for i in 1 .. 5
     loop
-      if substr( 'GGLLLGLGLLGLLGLGLLLGLGGLLLLGGLLLLGGLGLGLLGLLGLLGLG', l_v * 5 + i, 1 ) = 'G'
-      then
-        l_code := 2; -- number set B
-      else
-        l_code := 1; -- number set A
-      end if;
+      l_code := substr( '11000101001001010001011000011000011010100100100101'
+                      , l_v * 5 + i
+                      , 1
+                      ) * 10;
       svg_centered_text( p_svg, substr( p_val, i, 1 ), 0, 7, p_x, p_h2, 75 );
-      digit_bar( p_svg, p_x, substr( p_val, i, 1 ), l_code, p_h, p_h2 );
+      ean_bar( p_svg, p_x, p_mapping( l_code + substr( p_val, i, 1 ) ), p_h, p_h2 );
       if i < 5
       then
-        delineator_bar( p_svg, p_x, p_h2, p_h1 - 0.5 * p_h2 );
+        ean_bar( p_svg, p_x, p_mapping( 34 ), p_h, p_h2 ); -- add-on delineator
       end if;
     end loop;
-    greater_human( p_svg, p_x, p_h2, p_scale );
+    greater_less_human( p_svg, p_x, p_h2, true );
   end ean5_svg;
   --
   function ean13_svg( p_val varchar2, p_parm varchar2 )
@@ -3315,39 +3594,38 @@ THE SOFTWARE.
     l_h number;
     l_h1 number := 69.2424;
     l_h2 number := 9.3333;
-    l_scale number := 0.0055;
     l_ld pls_integer;
     l_addon varchar2(100);
+    l_mapping tp_mapping;
   begin
     l_val := check_ean_val_add_checknr( p_val, 13 );
-    init_ean_digits;
+    init_ean_digits( l_mapping );
     svg_centered_text( l_svg, substr( l_val, 1, 1 ), l_h1, 7, l_x, l_h2, 75 );
     l_x := l_x + 7;
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); -- left guard bar
+    ean_bar( l_svg, l_x, l_mapping( 30 ), l_h1 + 0.5 * l_h2 ); -- left guard bar
     --
     l_ld := substr( l_val, 1, 1 );
     svg_centered_text( l_svg, substr( l_val, 2, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 2, 1 ), 1, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( 0 + substr( l_val, 2, 1 ) ), l_h1 );
     svg_centered_text( l_svg, substr( l_val, 3, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 3, 1 ), case when l_ld < 4 then 1 else 2 end, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( case when l_ld < 4 then 0 else 10 end + substr( l_val, 3, 1 ) ), l_h1 );
     svg_centered_text( l_svg, substr( l_val, 4, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 4, 1 ), case when l_ld in ( 0, 4, 7, 8 ) then 1 else 2 end, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( case when l_ld  in ( 0, 4, 7, 8 ) then 0 else 10 end + substr( l_val, 4, 1 ) ), l_h1 );
     svg_centered_text( l_svg, substr( l_val, 5, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 5, 1 ), case when l_ld in ( 0, 1, 4, 5, 9 ) then 1 else 2 end, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( case when l_ld  in ( 0, 1, 4, 5, 9 ) then 0 else 10 end + substr( l_val, 5, 1 ) ), l_h1 );
     svg_centered_text( l_svg, substr( l_val, 6, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 6, 1 ), case when l_ld in ( 0, 2, 5, 6, 7 ) then 1 else 2 end, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( case when l_ld  in (  0, 2, 5, 6, 7 ) then 0 else 10 end + substr( l_val, 6, 1 ) ), l_h1 );
     svg_centered_text( l_svg, substr( l_val, 7, 1 ), l_h1, 7, l_x, l_h2, 75 );
-    digit_bar( l_svg, l_x, substr( l_val, 7, 1 ), case when l_ld in ( 0, 3, 6, 8, 9 ) then 1 else 2 end, l_h1 );
+    ean_bar( l_svg, l_x, l_mapping( case when l_ld  in ( 0, 3, 6, 8, 9 ) then 0 else 10 end + substr( l_val, 7, 1 ) ), l_h1 );
     --
-    l_x := l_x + 1;                             -- centre guard bar
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); -- centre guard bar
-    l_x := l_x + 1;                             -- centre guard bar
+    ean_bar( l_svg, l_x, l_mapping( 31 ), l_h1 + 0.5 * l_h2 ); -- centre guard bar
+    --
     for i in 8 .. 13
     loop
       svg_centered_text( l_svg, substr( l_val, i, 1 ), l_h1, 7, l_x, l_h2, 75 );
-      digit_bar( l_svg, l_x, substr( l_val, i, 1 ), 3, l_h1 );
+      ean_bar( l_svg, l_x, l_mapping( 20 + substr( l_val, i, 1 ) ), l_h1 );
     end loop;
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); -- right guard bar
+    ean_bar( l_svg, l_x, l_mapping( 30 ), l_h1 + 0.5 * l_h2 ); -- right guard bar
     --
     if p_parm is not null
     then
@@ -3365,19 +3643,19 @@ THE SOFTWARE.
     end if;
     if l_addon is null
     then
-      greater_human( l_svg, l_x, l_h1 + l_h2, l_scale );
+      greater_less_human( l_svg, l_x, l_h1 + l_h2, true );
     else
       l_x := l_x + 7;
       l_h := l_h1 - 0.5 * l_h2;
       l_addon := trim( l_addon );
       if length( l_addon ) > 2 or jv( p_parm, 'ean5' ) is not null
       then
-        ean5_svg( l_svg, lpad( l_addon, 5, '0' ), l_x, l_h, l_h1, l_h2, l_scale );
+        ean5_svg( l_svg, lpad( l_addon, 5, '0' ), l_x, l_h, l_h2, l_mapping );
       else
-        ean2_svg( l_svg, lpad( l_addon, 2, '0' ), l_x, l_h, l_h1, l_h2, l_scale );
+        ean2_svg( l_svg, lpad( l_addon, 2, '0' ), l_x, l_h, l_h2, l_mapping );
       end if;
     end if;
-    g_ean_digits.delete;
+    l_mapping.delete;
     return svg_header( l_svg, p_parm, p_width => l_x, p_height => l_h1 + l_h2, p_font => true );
   end;
   --
@@ -3389,30 +3667,26 @@ THE SOFTWARE.
     l_x number := 0;
     l_h1 number := 55.2424;
     l_h2 number := 9.3333;
-    l_scale number := 0.0055;
+    l_mapping tp_mapping;
   begin
     l_val := check_ean_val_add_checknr( p_val, 8 );
-    init_ean_digits;
-    less_human( l_svg, l_x, l_h1 + l_h2, l_scale );
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); -- left guard bar
+    init_ean_digits( l_mapping );
+    greater_less_human( l_svg, l_x, l_h1 + l_h2, false );
+    ean_bar( l_svg, l_x, l_mapping( 30 ), l_h1 + 0.5 * l_h2 ); -- left guard bar
     for i in 1 .. 4
     loop
       svg_centered_text( l_svg, substr( l_val, i, 1 ), l_h1, 7, l_x, l_h2, 75 );
---      svg_text( l_svg, substr( l_val, i, 1 ), l_x, l_h1 + l_h2, 0.8 );
-      digit_bar( l_svg, l_x, substr( l_val, i, 1 ), 1, l_h1 );
+      ean_bar( l_svg, l_x, l_mapping( substr( l_val, i, 1 ) ), l_h1 );
     end loop;
-    l_x := l_x + 1;  --
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); --  centre guard bar
-    l_x := l_x + 1;  --
+    ean_bar( l_svg, l_x, l_mapping( 31 ), l_h1 + 0.5 * l_h2 ); -- centre guard bar
     for i in 5 .. 8
     loop
       svg_centered_text( l_svg, substr( l_val, i, 1 ), l_h1, 7, l_x, l_h2, 75 );
- --     svg_text( l_svg, substr( l_val, i, 1 ), l_x, l_h1 + l_h2, 0.8 );
-      digit_bar( l_svg, l_x, substr( l_val, i, 1 ), 3, l_h1 );
+      ean_bar( l_svg, l_x, l_mapping( 20 + substr( l_val, i, 1 ) ), l_h1 );
     end loop;
-    guard_bar( l_svg, l_x, l_h1 + 0.5 * l_h2 ); -- right guard bar
-    greater_human( l_svg, l_x, l_h1 + l_h2, l_scale );
-    g_ean_digits.delete;
+    ean_bar( l_svg, l_x, l_mapping( 30 ), l_h1 + 0.5 * l_h2 ); -- right guard bar
+    greater_less_human( l_svg, l_x, l_h1 + l_h2, true );
+    l_mapping.delete;
     return svg_header( l_svg, p_parm, p_width => l_x, p_height => l_h1 + l_h2, p_font => true );
   end ean8_svg;
   --
@@ -3420,22 +3694,24 @@ THE SOFTWARE.
   return clob
   is
     l_svg clob;
-    l_sz pls_integer;
+    l_hsz pls_integer;
+    l_vsz pls_integer;
   begin
-    l_sz := p_matrix.count;
-    for i in 0 .. l_sz - 1
+    l_hsz := p_matrix.count;
+    l_vsz := p_matrix(1).count;
+    for c in 0 .. l_hsz - 1
     loop
-      for j in 0 .. l_sz - 1
+      for r in 0 .. l_vsz - 1
       loop
-        if p_matrix( i )( j ) > 0
+        if p_matrix( c )( r ) > 0
         then
-           l_svg := l_svg || svg_rect( i, 1, 1, j );
+           l_svg := l_svg || svg_rect( c, 1, 1, r );
         end if;
       end loop;
     end loop;
     p_matrix.delete;
     --
-    return svg_header( l_svg, p_parm, l_sz );
+    return svg_header( l_svg, p_parm, p_width => l_hsz, p_height => l_vsz );
   end;
   --
   function svg_bar( p_row in out nocopy tp_bar_row
@@ -3540,6 +3816,17 @@ THE SOFTWARE.
     return svg_matrix( l_matrix, p_parm );
   end;
   --
+  function datamatrix_svg( p_val varchar2 character set any_cs
+                         , p_parm varchar2
+                         )
+  return clob
+  is
+    l_matrix tp_matrix;
+  begin
+    gen_datamatrix_matrix( p_val, p_parm, l_matrix );
+    return svg_matrix( l_matrix, p_parm );
+  end;
+  --
   function barcode_svg( p_val varchar2 character set any_cs
                       , p_type varchar2
                       , p_parm varchar2 := null
@@ -3573,6 +3860,10 @@ THE SOFTWARE.
          or upper( p_type ) like 'INTERLEAVED%'
       then
         return itf_svg( p_val, p_parm );
+      elsif upper( p_type ) like '%DATA%'
+         or upper( p_type ) like '%MATRIX%'
+      then
+        return datamatrix_svg( p_val, p_parm );
       end if;
     end if;
     return l_empty_svg;
@@ -3589,5 +3880,3 @@ THE SOFTWARE.
   end;
   --
 end;
-/
-                   
