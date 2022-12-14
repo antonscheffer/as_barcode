@@ -14,7 +14,6 @@ is
 **   Date: 2022-11-04
 **     added svg output
 **   Date: 2022-12-14
-**     removed download_barcode
 **     started with datamatrix
 ******************************************************************************
 ******************************************************************************
@@ -3318,7 +3317,21 @@ dbms_output.put_line( bitstohex( l_stream ) );
     end;
     return '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D4944415478DA63F8FF9FA11E00077D027EFDBCECEE0000000049454E44AE426082';
   end;
---
+  --
+  procedure download_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
+  is
+    t_img raw(32767);
+  begin
+    t_img := barcode( p_val, p_type, p_parm );
+    htp.init;
+    owa_util.mime_header( 'image/png', false );
+    htp.p( 'Content-length: ' || utl_raw.length( t_img ) );
+    htp.p( 'Content-Disposition: : inline;' );
+    htp.p( 'Cache-Control: no-store, no-cache, must-revalidate' );
+    owa_util.http_header_close;
+    wpg_docload.download_file( p_blob => t_img );
+  end;
+  --
   function datauri_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
   return clob
   is
