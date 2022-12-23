@@ -18,17 +18,17 @@ is
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2022 by Anton Scheffer
- 
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
- 
+
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
- 
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -36,7 +36,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
- 
+
 ******************************************************************************
 ******************************************** */
   type tp_bits is table of pls_integer index by pls_integer;
@@ -398,19 +398,19 @@ THE SOFTWARE.
     return l_int;
   exception when others then return null;
   end;
- 
+
   function check_pos( p_parm varchar2, p_name varchar2 )
   return boolean
   is
   begin
-    return lower( jv( p_parm, p_name ) ) in ( 'true', 'y', 'yes' );
+    return coalesce( lower( jv( p_parm, p_name ) ) in ( 'true', 'y', 'yes' ), false );
   end;
   --
   function check_neg( p_parm varchar2, p_name varchar2 )
   return boolean
   is
   begin
-    return lower( jv( p_parm, p_name ) ) in ( 'false', 'n', 'no' );
+    return coalesce( lower( jv( p_parm, p_name ) ) in ( 'false', 'n', 'no' ), false );
   end;
   --
   function generate_png( p_dat blob, p_width pls_integer, p_height pls_integer, p_parm varchar2 )
@@ -2034,6 +2034,7 @@ THE SOFTWARE.
     l_chr pls_integer;
     l_idx pls_integer;
     l_len pls_integer;
+    l_vlen pls_integer;
     l_tmp pls_integer;
     l_mx  pls_integer;
     l_my  pls_integer;
@@ -2048,6 +2049,9 @@ THE SOFTWARE.
       type tp_dm_config is table of tp_config;
       l_dm_config tp_dm_config;
       l_idx pls_integer;
+      l_no_dmre boolean;
+      l_no_square boolean;
+      l_max_rows pls_integer;
     begin
       l_dm_config := tp_dm_config
                        ( tp_config( 1, 10, 10, 1, 1, 5, 1, 3 )
@@ -2058,16 +2062,34 @@ THE SOFTWARE.
                        , tp_config( 1, 16, 16, 1, 1, 12, 1, 12 )
                        , tp_config( 2, 12, 26, 1, 1, 14, 1, 16 )
                        , tp_config( 1, 18, 18, 1, 1, 14, 1, 18 )
+                       , tp_config( 3, 8, 48, 1, 2, 15, 1, 18 )
                        , tp_config( 1, 20, 20, 1, 1, 18, 1, 22 )
                        , tp_config( 2, 12, 36, 1, 2, 18, 1, 22 )
+                       , tp_config( 3, 8, 64, 1, 4, 18, 1, 24 )
                        , tp_config( 1, 22, 22, 1, 1, 20, 1, 30 )
                        , tp_config( 2, 16, 36, 1, 2, 24, 1, 32 )
+                       , tp_config( 3, 8, 80, 1, 4, 22, 1, 32 )
+                       , tp_config( 3, 8, 96, 1, 4, 28, 1, 38 )
                        , tp_config( 1, 24, 24, 1, 1, 24, 1, 36 )
+                       , tp_config( 3, 12, 64, 1, 4, 27, 1, 43 )
                        , tp_config( 1, 26, 26, 1, 1, 28, 1, 44 )
+                       , tp_config( 3, 20, 36, 1, 2, 28, 1, 44 )
                        , tp_config( 2, 16, 48, 1, 2, 28, 1, 49 )
+                       , tp_config( 3, 8, 120, 1, 6, 32, 1, 49 )
+                       , tp_config( 3, 20, 44, 1, 2, 34, 1, 56 )
                        , tp_config( 1, 32, 32, 2, 2, 36, 1, 62 )
+                       , tp_config( 3, 16, 64, 1, 4, 36, 1, 62 )
+                       , tp_config( 3, 8, 144, 1, 6, 36, 1, 63 )
+                       , tp_config( 3, 12, 88, 1, 4, 36, 1, 64 )
+                       , tp_config( 3, 26, 40, 1, 2, 38, 1, 70 )
+                       , tp_config( 3, 22, 48, 1, 2, 38, 1, 72 )
+                       , tp_config( 3, 24, 48, 1, 2, 41, 1, 80 )
+                       , tp_config( 3, 20, 64, 1, 4, 42, 1, 84 )
                        , tp_config( 1, 36, 36, 2, 2, 42, 1, 86 )
+                       , tp_config( 3, 26, 48, 1, 2, 42, 1, 90 )
+                       , tp_config( 3, 24, 64, 1, 4, 46, 1, 108 )
                        , tp_config( 1, 40, 40, 2, 2, 48, 1, 114 )
+                       , tp_config( 3, 26, 64, 1, 4, 50, 1, 118 )
                        , tp_config( 1, 44, 44, 2, 2, 56, 1, 144 )
                        , tp_config( 1, 48, 48, 2, 2, 68, 1, 174 )
                        , tp_config( 1, 52, 52, 2, 2, 84, 2, 204 )
@@ -2080,10 +2102,18 @@ THE SOFTWARE.
                        , tp_config( 1, 120, 120, 6, 6, 408, 6, 1050 )
                        , tp_config( 1, 132, 132, 6, 6, 496, 8, 1304 )
                        , tp_config( 1, 144, 144, 6, 6, 620, 10, 1558 ) );
+      --
+      l_no_dmre := not check_pos( p_parm, 'dmre' );
+      l_no_square := check_neg( p_parm, 'square' );
+      l_max_rows := coalesce( check_int( p_parm, 'max_rows' ), 1000 );
+      --
       l_idx := l_dm_config.first;
       loop
         exit when l_idx is null;
         if l_dm_config( l_idx )( 8 ) >= p_needed
+          and ( not l_no_dmre or l_dm_config( l_idx )( 1 ) in ( 1, 2 ) )
+          and ( not l_no_square or l_dm_config( l_idx )( 1 ) in ( 2, 3 ) )
+          and ( l_dm_config( l_idx )( 2 ) <= l_max_rows )
         then
           p_config := l_dm_config( l_idx );
           exit;
@@ -2092,195 +2122,170 @@ THE SOFTWARE.
       end loop;
       l_dm_config.delete;
     end;
-  function hextobits( p_x varchar2 )
-  return tp_bits
-  is
-    rv tp_bits;
-  begin
-    for i in 0 .. length( p_x ) / 2 - 1
-    loop
-      rv( i ) := to_number( substr( p_x, i * 2 + 1, 2 ), 'xx' );
-    end loop;
-    return rv;
-  end;
-  function bitstohex( p_x tp_bits )
-  return varchar2
-  is
-    rv varchar2(32000);
-  begin
-    for i in p_x.first .. p_x.last
-    loop
-      rv := rv || to_char( p_x(i), 'fm0X' );
-    end loop;
-    return rv;
-  end;
-  --
-  procedure place( p_stream  tp_bits
-                 , p_numrows pls_integer
-                 , p_numcols pls_integer
-                 , p_data out tp_matrix
-                 )
-  is
-    l_pos pls_integer;
-    l_row pls_integer;
-    l_col pls_integer;
     --
-    procedure module( p_row pls_integer
+    procedure place( p_stream  tp_bits
+                   , p_numrows pls_integer
+                   , p_numcols pls_integer
+                   , p_data out tp_matrix
+                   )
+    is
+      l_pos pls_integer;
+      l_row pls_integer;
+      l_col pls_integer;
+      --
+      procedure module( p_row pls_integer
+                      , p_col pls_integer
+                      , p_val pls_integer
+                      , p_bit pls_integer
+                      )
+      is
+        l_row pls_integer := p_row;
+        l_col pls_integer := p_col;
+      begin
+        if l_row < 0
+        then
+          l_row := l_row + p_numrows;
+          l_col := l_col + 4 - mod( p_numrows + 4, 8 );
+        end if;
+        if l_col < 0
+        then
+          l_col := l_col + p_numcols;
+          l_row := l_row + 4 - mod( p_numcols + 4, 8 );
+        end if;
+        p_data( l_col )( l_row ) := sign( bitand( p_val, power( 2, 8 - p_bit ) ) );
+      end;
+      --
+      procedure utah( p_row pls_integer
                     , p_col pls_integer
                     , p_val pls_integer
-                    , p_bit pls_integer
                     )
-    is
-      l_row pls_integer := p_row;
-      l_col pls_integer := p_col;
-    begin
-      if l_row < 0
-      then
-        l_row := l_row + p_numrows;
-        l_col := l_col + 4 - mod( p_numrows + 4, 8 );
-      end if;
-      if l_col < 0
-      then
-        l_col := l_col + p_numcols;
-        l_row := l_row + 4 - mod( p_numcols + 4, 8 );
-      end if;
-      p_data( l_col )( l_row ) := sign( bitand( p_val, power( 2, 8 - p_bit ) ) );
-    end;
-    --
-    procedure utah( p_row pls_integer
-                  , p_col pls_integer
-                  , p_val pls_integer
-                  )
-    is
-    begin
-      module( p_row - 2, p_col - 2, p_val, 1);
-      module( p_row - 2, p_col - 1, p_val, 2);
-      module( p_row - 1, p_col - 2, p_val, 3);
-      module( p_row - 1, p_col - 1, p_val, 4);
-      module( p_row - 1, p_col, p_val, 5);
-      module( p_row, p_col - 2, p_val, 6);
-      module( p_row, p_col - 1, p_val, 7);
-      module( p_row, p_col, p_val, 8);
-    end;
-    --
-    procedure corner1( p_val pls_integer )
-    is
-    begin
-      module( p_numrows - 1, 0, p_val, 1);
-      module( p_numrows - 1, 1, p_val, 2);
-      module( p_numrows - 1, 2, p_val, 3);
-      module( 0, p_numcols - 2, p_val, 4);
-      module( 0, p_numcols - 1, p_val, 5);
-      module( 1, p_numcols - 1, p_val, 6);
-      module( 2, p_numcols - 1, p_val, 7);
-      module( 3, p_numcols - 1, p_val, 8);
-    end;
-    --
-    procedure corner2( p_val pls_integer )
-    is
-    begin
-      module( p_numrows - 3, 0, p_val, 1);
-      module( p_numrows - 2, 0, p_val, 2);
-      module( p_numrows - 1, 0, p_val, 3);
-      module( 0, p_numcols - 4, p_val, 4);
-      module( 0, p_numcols - 3, p_val, 5);
-      module( 0, p_numcols - 2, p_val, 6);
-      module( 0, p_numcols - 1, p_val, 7);
-      module( 1, p_numcols - 1, p_val, 8);
-    end;
-    --
-    procedure corner3( p_val pls_integer )
-    is
-    begin
-      module( p_numrows - 3, 0, p_val, 1);
-      module( p_numrows - 2, 0, p_val, 2);
-      module( p_numrows - 1, 0, p_val, 3);
-      module( 0, p_numcols - 2, p_val, 4);
-      module( 0, p_numcols - 1, p_val, 5);
-      module( 1, p_numcols - 1, p_val, 6);
-      module( 2, p_numcols - 1, p_val, 7);
-      module( 3, p_numcols - 1, p_val, 8);
-    end;
-    --
-    procedure corner4( p_val pls_integer )
-    is
-    begin
-      module( p_numrows - 1, 0, p_val, 1);
-      module( p_numrows - 1, p_numcols - 1, p_val, 2);
-      module( 0, p_numcols - 3, p_val, 3);
-      module( 0, p_numcols - 2, p_val, 4);
-      module( 0, p_numcols - 1, p_val, 5);
-      module( 1, p_numcols - 3, p_val, 6);
-      module( 1, p_numcols - 2, p_val, 7);
-      module( 1, p_numcols - 1, p_val, 8);
-    end;
-  begin
-    l_pos := 0;
-    l_row := 4;
-    l_col := 0;
-    loop
-      if l_row = p_numrows and l_col = 0
-      then
-        corner1( p_stream( l_pos ) );
-        l_pos := l_pos + 1;
-      end if;
-      if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 4 ) != 0
-      then
-        corner2( p_stream( l_pos ) );
-        l_pos := l_pos + 1;
-      end if;
-      if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 8 ) = 4
-      then
-        corner3( p_stream( l_pos ) );
-        l_pos := l_pos + 1;
-      end if;
-      if l_row = p_numrows + 4 and l_col = 2 and mod( p_numcols, 8 ) = 0
-      then
-        corner4( p_stream( l_pos ) );
-        l_pos := l_pos + 1;
-      end if;
+      is
+      begin
+        module( p_row - 2, p_col - 2, p_val, 1);
+        module( p_row - 2, p_col - 1, p_val, 2);
+        module( p_row - 1, p_col - 2, p_val, 3);
+        module( p_row - 1, p_col - 1, p_val, 4);
+        module( p_row - 1, p_col, p_val, 5);
+        module( p_row, p_col - 2, p_val, 6);
+        module( p_row, p_col - 1, p_val, 7);
+        module( p_row, p_col, p_val, 8);
+      end;
       --
+      procedure corner1( p_val pls_integer )
+      is
+      begin
+        module( p_numrows - 1, 0, p_val, 1);
+        module( p_numrows - 1, 1, p_val, 2);
+        module( p_numrows - 1, 2, p_val, 3);
+        module( 0, p_numcols - 2, p_val, 4);
+        module( 0, p_numcols - 1, p_val, 5);
+        module( 1, p_numcols - 1, p_val, 6);
+        module( 2, p_numcols - 1, p_val, 7);
+        module( 3, p_numcols - 1, p_val, 8);
+      end;
+      --
+      procedure corner2( p_val pls_integer )
+      is
+      begin
+        module( p_numrows - 3, 0, p_val, 1);
+        module( p_numrows - 2, 0, p_val, 2);
+        module( p_numrows - 1, 0, p_val, 3);
+        module( 0, p_numcols - 4, p_val, 4);
+        module( 0, p_numcols - 3, p_val, 5);
+        module( 0, p_numcols - 2, p_val, 6);
+        module( 0, p_numcols - 1, p_val, 7);
+        module( 1, p_numcols - 1, p_val, 8);
+      end;
+      --
+      procedure corner3( p_val pls_integer )
+      is
+      begin
+        module( p_numrows - 3, 0, p_val, 1);
+        module( p_numrows - 2, 0, p_val, 2);
+        module( p_numrows - 1, 0, p_val, 3);
+        module( 0, p_numcols - 2, p_val, 4);
+        module( 0, p_numcols - 1, p_val, 5);
+        module( 1, p_numcols - 1, p_val, 6);
+        module( 2, p_numcols - 1, p_val, 7);
+        module( 3, p_numcols - 1, p_val, 8);
+      end;
+      --
+      procedure corner4( p_val pls_integer )
+      is
+      begin
+        module( p_numrows - 1, 0, p_val, 1);
+        module( p_numrows - 1, p_numcols - 1, p_val, 2);
+        module( 0, p_numcols - 3, p_val, 3);
+        module( 0, p_numcols - 2, p_val, 4);
+        module( 0, p_numcols - 1, p_val, 5);
+        module( 1, p_numcols - 3, p_val, 6);
+        module( 1, p_numcols - 2, p_val, 7);
+        module( 1, p_numcols - 1, p_val, 8);
+      end;
+    begin
+      l_pos := 0;
+      l_row := 4;
+      l_col := 0;
       loop
-        if l_row < p_numrows and l_col >= 0 and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+        if l_row = p_numrows and l_col = 0
         then
---dbms_output.put_line( 'up: ' || l_row || ' ' || l_col || ' ' || l_pos );
-          utah( l_row, l_col, p_stream( l_pos ) );
+          corner1( p_stream( l_pos ) );
           l_pos := l_pos + 1;
         end if;
-        l_row := l_row - 2;
-        l_col := l_col + 2;
-        exit when l_row < 0 or l_col >= p_numcols;
-      end loop;
-      l_row := l_row + 1;
-      l_col := l_col + 3;
-      --
-      loop
-        if l_row >= 0 and l_col < p_numcols and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+        if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 4 ) != 0
         then
---dbms_output.put_line( 'down: ' || l_row || ' ' || l_col || ' ' || l_pos );
-          utah( l_row, l_col, p_stream( l_pos ) );
+          corner2( p_stream( l_pos ) );
           l_pos := l_pos + 1;
         end if;
-        l_row := l_row + 2;
-        l_col := l_col - 2;
-        exit when l_row >= p_numrows or l_col < 0;
+        if l_row = p_numrows - 2 and l_col = 0 and mod( p_numcols, 8 ) = 4
+        then
+          corner3( p_stream( l_pos ) );
+          l_pos := l_pos + 1;
+        end if;
+        if l_row = p_numrows + 4 and l_col = 2 and mod( p_numcols, 8 ) = 0
+        then
+          corner4( p_stream( l_pos ) );
+          l_pos := l_pos + 1;
+        end if;
+        --
+        loop
+          if l_row < p_numrows and l_col >= 0 and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+          then
+            utah( l_row, l_col, p_stream( l_pos ) );
+            l_pos := l_pos + 1;
+          end if;
+          l_row := l_row - 2;
+          l_col := l_col + 2;
+          exit when l_row < 0 or l_col >= p_numcols;
+        end loop;
+        l_row := l_row + 1;
+        l_col := l_col + 3;
+        --
+        loop
+          if l_row >= 0 and l_col < p_numcols and not ( p_data.exists( l_col ) and p_data( l_col ).exists( l_row ) )
+          then
+            utah( l_row, l_col, p_stream( l_pos ) );
+            l_pos := l_pos + 1;
+          end if;
+          l_row := l_row + 2;
+          l_col := l_col - 2;
+          exit when l_row >= p_numrows or l_col < 0;
+        end loop;
+        l_row := l_row + 3;
+        l_col := l_col + 1;
+        --
+        exit when l_row >= p_numrows and l_col >= p_numcols;
       end loop;
-      l_row := l_row + 3;
-      l_col := l_col + 1;
       --
-      exit when l_row >= p_numrows and l_col >= p_numcols;
-    end loop;
---dbms_output.put_line( 'pos: ' || l_pos );
+      if not ( p_data.exists( p_numcols - 1 ) and p_data( p_numcols - 1 ).exists( p_numrows - 1 ) )
+      then
+        p_data( p_numcols - 1 )( p_numrows - 1 ) := 1;
+        p_data( p_numcols - 1 )( p_numrows - 2 ) := 0;
+        p_data( p_numcols - 2 )( p_numrows - 1 ) := 0;
+        p_data( p_numcols - 2 )( p_numrows - 2 ) := 1;
+      end if;
+    end place;
     --
-    if not ( p_data.exists( p_numcols - 1 ) and p_data( p_numcols - 1 ).exists( p_numrows - 1 ) )
-    then
-      p_data( p_numcols - 1 )( p_numrows - 1 ) := 1;
-      p_data( p_numcols - 1 )( p_numrows - 2 ) := 0;
-      p_data( p_numcols - 2 )( p_numrows - 1 ) := 0;
-      p_data( p_numcols - 2 )( p_numrows - 2 ) := 1;
-    end if;
-  end place;
-  --
   begin
     if (   (   isnchar( p_val )
            and utl_i18n.raw_to_nchar( utl_i18n.string_to_raw( p_val, 'US7ASCII' ), 'US7ASCII' ) = p_val
@@ -2296,49 +2301,223 @@ THE SOFTWARE.
       l_stream( 1 ) := 27;  -- UTF-8 + 1
       l_val := utl_i18n.string_to_raw( p_val, 'AL32UTF8' );
     end if;
+    l_vlen := nvl( length( p_val ), 0 );
     l_len := nvl( utl_raw.length( l_val ), 0 );
     l_idx := 1;
-    loop
-      exit when l_idx > l_len;
-      l_chr := to_number( utl_raw.substr( l_val, l_idx, 1 ), 'XX' );
-      if l_chr < 128
-      then
-        if l_chr between 48 and 57
-          and l_idx < l_len
-          and utl_raw.substr( l_val, l_idx + 1, 1 ) between '30' and '39'
+    if (   l_vlen > 5
+       and regexp_count( p_val, '[a-z A-Z ]' ) /  l_vlen > 0.8
+       )
+    then
+      declare
+        c_c40  constant pls_integer := 230;
+        c_text constant pls_integer := 239;
+        l_mode pls_integer;
+        l_last_idx pls_integer;
+        type tp_cb is table of pls_integer index by pls_integer;
+        l_code_buf tp_cb;
+        --
+        function c40( p_val pls_integer )
+        return boolean
+        is
+        begin
+          return p_val between 65 and 90
+              or p_val between 48 and 57
+              or p_val = 32;
+        end;
+        --
+        function text( p_val pls_integer )
+        return boolean
+        is
+        begin
+          return p_val between 97 and 122
+              or p_val between 48 and 57
+              or p_val = 32;
+        end;
+        --
+        function shift3( p_val pls_integer )
+        return boolean
+        is
+        begin
+          return p_val between 96 and 127
+              or p_val between 65 and 90;
+        end;
+        --
+        procedure add2buf( p_chr pls_integer
+                         , p_mode pls_integer
+                         , p_code_buf in out tp_cb
+                         )
+        is
+        begin
+          if p_mode = c_c40 and c40( p_chr )
+          then
+            p_code_buf( p_code_buf.count ) := case
+                                                when p_chr = 32 then 3
+                                                when p_chr between 48 and 57 then p_chr - 44
+                                                else p_chr - 51
+                                              end;
+          elsif p_mode = c_text and text( p_chr )
+          then
+            p_code_buf( p_code_buf.count ) := case
+                                                when p_chr = 32 then 3
+                                                when p_chr between 48 and 57 then p_chr - 44
+                                                else p_chr - 83
+                                              end;
+          elsif shift3( p_chr )
+          then
+            p_code_buf( p_code_buf.count ) := 2;
+            p_code_buf( p_code_buf.count ) := case
+                                                when p_chr > 90 then p_chr - 96
+                                                else p_chr - 64
+                                              end;
+          elsif p_chr > 127
+          then -- Upper
+            p_code_buf( p_code_buf.count ) := 1;  -- shift 2
+            p_code_buf( p_code_buf.count ) := 30; -- upper shift
+            add2buf( p_chr - 128, p_mode, p_code_buf );
+          elsif p_chr <= 31
+          then -- shift 1
+            p_code_buf( p_code_buf.count ) := 0;
+            p_code_buf( p_code_buf.count ) := p_chr;
+          else -- shift 2
+            p_code_buf( p_code_buf.count ) := 1;
+            p_code_buf( p_code_buf.count ) := case
+                                                when p_chr <= 47 then p_chr - 33
+                                                when p_chr <= 64 then p_chr - 43
+                                                else p_chr - 69
+                                              end;
+          end if;
+        end;
+        --
+        procedure buf2stream( p_code_buf in out tp_cb )
+        is
+          l_code pls_integer;
+        begin
+          while p_code_buf.count > 2
+          loop
+            l_code := 1600 * p_code_buf( 0 ) + 40 * p_code_buf( 1 ) + p_code_buf( 2 ) + 1;
+            l_stream( l_stream.count ) := trunc( l_code / 256 );
+            l_stream( l_stream.count ) := mod( l_code, 256 );
+            p_code_buf.delete( 0, 2 );
+            for i in 3 .. 2 + p_code_buf.count
+            loop
+              p_code_buf( i - 3 ) := p_code_buf( i );
+              p_code_buf.delete( i );
+            end loop;
+          end loop;
+        end;
+        --
+        procedure ascii2stream( p1 pls_integer, p2 pls_integer := null )
+        is
+        begin
+          if p1 < 128
+          then
+            l_stream( l_stream.count ) := p1 + 1;
+          else
+            l_stream( l_stream.count ) := 235;  -- set high bit for next character
+            l_stream( l_stream.count ) := p1 - 127;
+          end if;
+          if p2 is not null
+          then
+            ascii2stream( p2 );
+          end if;
+        end;
+        --
+      begin
+        if regexp_count( p_val, '[A-Z]' ) >= regexp_count( p_val, '[a-z]' )
         then
-          l_tmp := to_number( utl_i18n.raw_to_char(utl_raw.substr( l_val, l_idx, 2 ), 'US7ASCII' ) );
-          l_stream( l_stream.count ) := 130 + l_tmp;
-          l_idx := l_idx + 1;
+          l_mode := c_c40;
         else
-          l_stream( l_stream.count ) := l_chr + 1;
+          l_mode := c_text;
         end if;
+        l_stream( l_stream.count ) := l_mode;
+        loop
+          exit when l_idx > l_len;
+          l_chr := to_number( utl_raw.substr( l_val, l_idx, 1 ), 'XX' );
+          add2buf( l_chr, l_mode, l_code_buf );
+          if mod( l_code_buf.count, 3 ) = 0
+          then
+            buf2stream( l_code_buf );
+            l_last_idx := l_idx + 1;
+          end if;
+          l_idx := l_idx + 1;
+        end loop;
+        --
+        l_stream( l_stream.count ) := 254; -- back to ascii
+        if l_last_idx < l_idx
+        then
+          for i in l_last_idx .. l_len
+          loop
+            l_chr := to_number( utl_raw.substr( l_val, i, 1 ), 'XX' );
+            ascii2stream( l_chr );
+          end loop;
+        end if;
+      end;
+    elsif (   l_vlen > 1
+          and l_len > l_vlen
+          )
+    then
+      l_stream( l_stream.count ) := 231; -- base 256
+      if l_len < 250
+      then
+        l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 255 ) + 1;
+        l_stream( l_stream.count ) := mod( l_len + l_tmp, 256 );  -- 255-state
       else
-        l_stream( l_stream.count ) := 235;  -- set high bit for next character
-        l_stream( l_stream.count ) := l_chr - 127;
+        l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 255 ) + 1;
+        l_stream( l_stream.count ) := mod( trunc( l_len / 250 ) + 249 + l_tmp, 256 );  -- 255-state
+        l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 255 ) + 1;
+        l_stream( l_stream.count ) := mod( mod( l_len, 250 ) + l_tmp, 256 );  -- 255-state
       end if;
-      l_idx := l_idx + 1;
-    end loop;
+      for i in 1 .. l_len
+      loop
+        l_chr := to_number( utl_raw.substr( l_val, i, 1 ), 'XX' );
+        l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 255 ) + 1;
+        l_stream( l_stream.count ) := mod( l_chr + l_tmp, 256 );  -- 255-state
+      end loop;
+    else
+      loop
+        exit when l_idx > l_len;
+        l_chr := to_number( utl_raw.substr( l_val, l_idx, 1 ), 'XX' );
+        if l_chr < 128
+        then
+          if l_chr between 48 and 57
+            and l_idx < l_len
+            and utl_raw.substr( l_val, l_idx + 1, 1 ) between '30' and '39'
+          then
+            l_tmp := to_number( utl_i18n.raw_to_char(utl_raw.substr( l_val, l_idx, 2 ), 'US7ASCII' ) );
+            l_stream( l_stream.count ) := 130 + l_tmp;
+            l_idx := l_idx + 1;
+          else
+            l_stream( l_stream.count ) := l_chr + 1;
+          end if;
+        else
+          l_stream( l_stream.count ) := 235;  -- set high bit for next character
+          l_stream( l_stream.count ) := l_chr - 127;
+        end if;
+        l_idx := l_idx + 1;
+      end loop;
+    end if;
     --
-   get_config( l_config, l_stream.count, p_parm );
+    get_config( l_config, l_stream.count, p_parm );
+/*
 dbms_output.put_line( l_stream.count || ' ' || l_config( 8 ) || ' ' || bitstohex( l_stream ) );
 dbms_output.put_line( case l_config( 1 )
                         when 2 then 'Rectangular'
+                        when 3 then 'DMRE'
                         else 'Square'
                       end || ' Symbol: '
 || 'data region ' || ( l_config( 3 ) / l_config( 5 ) - 2 ) || 'x' || ( l_config( 2 ) / l_config( 4 ) - 2 )
 || ', symbol size ' || l_config( 3 ) || 'x' || l_config( 2 )
 || ', symbol data size ' || ( l_config( 3 ) - 2 * l_config( 5 ) ) || 'x' || ( l_config( 2 ) - 2 * l_config( 4 ) )
 || ', codewords ' || l_config( 8 ) || '+' || l_config( 6 ) );
+*/
     if l_stream.count < nvl( l_config( 8 ), 0 )
     then
-      l_stream( l_stream.count ) := 129;  -- End of message
+      l_stream( l_stream.count ) := 129;  -- padding
       while l_stream.count < l_config( 8 ) loop
         l_tmp :=  mod( 149 * ( l_stream.count + 1 ), 253 ) + 1;
         l_stream( l_stream.count ) := mod( 129 + l_tmp, 254 );  -- 253-state padding
       end loop;
     end if;
- dbms_output.put_line( bitstohex( l_stream ) );
     if l_config( 7 ) = 1
     then
       l_ecc := reed_solomon( l_stream, 301, 256, l_config( 6 ) );
@@ -2364,11 +2543,11 @@ dbms_output.put_line( case l_config( 1 )
         end loop;
       end loop;
     end if;
-      for i in l_ecc.first .. l_ecc.last
-      loop
-        l_stream( l_stream.count ) := l_ecc( i );
-      end loop;
-dbms_output.put_line( bitstohex( l_stream ) );
+    --
+    for i in l_ecc.first .. l_ecc.last
+    loop
+      l_stream( l_stream.count ) := l_ecc( i );
+    end loop;
     --
     place( l_stream
          , l_config( 2 ) - 2 * l_config( 4 )
@@ -3317,7 +3496,7 @@ dbms_output.put_line( bitstohex( l_stream ) );
     end;
     return '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D4944415478DA63F8FF9FA11E00077D027EFDBCECEE0000000049454E44AE426082';
   end;
-  --
+--
   procedure download_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
   is
     t_img raw(32767);
@@ -3331,7 +3510,7 @@ dbms_output.put_line( bitstohex( l_stream ) );
     owa_util.http_header_close;
     wpg_docload.download_file( p_blob => t_img );
   end;
-  --
+--
   function datauri_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
   return clob
   is
