@@ -6,11 +6,7 @@ is
                   )
   return raw;
 --
-  procedure download_barcode( p_val varchar2 character set any_cs
-                            , p_type varchar2
-                            , p_parm varchar2 := null
-                            );
---
+  procedure download_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null );
   function datauri_barcode( p_val varchar2 character set any_cs
                           , p_type varchar2
                           , p_parm varchar2 := null
@@ -29,5 +25,11 @@ is
                               )
   return clob;
 --  
+  function barcode_blob( p_val    varchar2 character set any_cs
+                       , p_type   varchar2
+                       , p_parm   varchar2 := null
+                       , p_format varchar2 := 'BMP'
+                       )
+  return blob;
+ -- 
 end;
-/
