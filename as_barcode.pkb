@@ -19,20 +19,22 @@ is
 **     UPC-A
 **   Date: 2023-02-08
 **     bmp-format
+**   Date: 2023-03-17
+**     gif-format
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2022 by Anton Scheffer
- 
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
- 
+
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
- 
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -40,7 +42,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
- 
+
 ******************************************************************************
 ******************************************** */
   type tp_bits is table of pls_integer index by pls_integer;
@@ -402,7 +404,7 @@ THE SOFTWARE.
     return l_int;
   exception when others then return null;
   end;
- 
+
   function check_pos( p_parm varchar2, p_name varchar2 )
   return boolean
   is
@@ -4457,7 +4459,138 @@ THE SOFTWARE.
     end loop;
     dbms_lob.freetemporary( l_dat );
     return l_bmp;
-  end;
+  end png2bmp;
+  --
+  function png2gif( p_png raw )
+  return blob
+  is
+    l_len pls_integer;
+    l_idx pls_integer;
+    l_tmp raw(32767);
+    l_gif blob;
+    l_width  pls_integer;
+    l_height pls_integer;
+    l_color1 raw(4);
+    l_color2 raw(4);
+    l_hdl pls_integer;
+    l_dat blob;
+    l_sub_buf raw(512);
+    c_max constant pls_integer := 254;
+    --
+    function little_endian( p_val pls_integer )
+    return raw
+    is
+    begin
+      return utl_raw.substr( utl_raw.cast_from_binary_integer( p_val, utl_raw.little_endian ), 1, 2 );
+    end;
+  begin
+    if p_png is null or utl_raw.substr( p_png, 1, 8 ) != '89504E470D0A1A0A'
+    then
+      return null;
+    end if;
+    l_idx := 9;
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    if utl_raw.substr( l_tmp, 1, 4 ) != '49484452' -- IHDR
+    then
+      return null;
+    end if;
+    l_width  := to_number( utl_raw.substr( l_tmp, 5, 4 ), 'XXXXXXXX' );
+    l_height := to_number( utl_raw.substr( l_tmp, 9, 4 ), 'XXXXXXXX' );
+    --
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    if utl_raw.substr( l_tmp, 1, 4 ) != '504C5445' -- PLTE
+    then
+      return null;
+    end if;
+    l_color1 := utl_raw.substr( l_tmp, 5, 3 );
+    l_color2 := utl_raw.substr( l_tmp, 8, 3 );
+    --
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    if utl_raw.substr( l_tmp, 1, 4 ) != '49444154' -- IDAT
+    then
+      return null;
+    end if;
+    l_tmp := utl_raw.substr( l_tmp, 5 + 2, l_len - 2 - 4 );
+    dbms_lob.createtemporary( l_dat, true );
+    l_hdl := utl_compress.lz_uncompress_open( utl_raw.concat( '1F8B0800000000000003', l_tmp ) );
+    loop
+      begin
+        utl_compress.lz_uncompress_extract( l_hdl, l_tmp );
+        dbms_lob.writeappend( l_dat, utl_raw.length( l_tmp ), l_tmp );
+      exception
+        when no_data_found then exit;
+      end;
+    end loop;
+    utl_compress.lz_uncompress_close( l_hdl );
+    --
+    dbms_lob.createtemporary( l_gif, true );
+    dbms_lob.writeappend
+      ( l_gif
+      , 29
+      , utl_raw.concat( '474946383961' -- GIF89a
+                      , little_endian( l_width )
+                      , little_endian( l_height )
+                      , '80' -- global colortable with 2 entries
+                      , '00' -- background color index
+                      , '00' -- aspect ratio
+                      , l_color1
+                      , l_color2
+                      , '2C00000000' -- image descriptor, left position 0, top position  0
+                      , little_endian( l_width )
+                      , little_endian( l_height )
+                      , '00' -- no local colortable, not interlaced
+                      )
+      );
+      -- https://commons.wikimedia.org/wiki/File:Quilt_design_as_46x46_uncompressed_GIF.gif
+    dbms_lob.writeappend( l_gif, 1, '07' );
+    for i in 0 .. l_height - 1
+    loop
+      l_tmp := dbms_lob.substr( l_dat, l_width, 2 + i * ( l_width + 1 ) );
+      for j in 1 .. l_width
+      loop
+        l_sub_buf := utl_raw.concat( l_sub_buf, utl_raw.substr( l_tmp, j, 1 ) );
+        if mod( j, c_max ) = 0
+        then
+          dbms_lob.writeappend( l_gif
+                              , c_max + 2
+                              , utl_raw.concat( to_char( c_max + 1, 'fm0X' )
+                                              , '80' -- clear
+                                              , l_sub_buf
+                                              )
+                              );
+          l_sub_buf := null;
+        end if;
+      end loop;
+      if l_sub_buf is not null
+      then
+        l_len := utl_raw.length( l_sub_buf );
+        dbms_lob.writeappend( l_gif
+                            , l_len + 2
+                            , utl_raw.concat( to_char( l_len + 1, 'fm0X' )
+                                            , '80'
+                                            , l_sub_buf
+                                            )
+                            );
+        l_sub_buf := null;
+      end if;
+    end loop;
+    --
+    dbms_lob.writeappend( l_gif, 2, '003B' ); -- last sub-block and trailer
+    dbms_lob.freetemporary( l_dat );
+    return l_gif;
+  end png2gif;
   --
   function barcode_blob( p_val    varchar2 character set any_cs
                        , p_type   varchar2
@@ -4469,12 +4602,15 @@ THE SOFTWARE.
     l_tmp  blob;
     l_dest integer := 1;
     l_src  integer := 1;
-    l_ctx  integer := 0;
+    l_ctx  integer := dbms_lob.default_lang_ctx;
     l_warn integer;
   begin
     if upper( p_format ) = 'BMP'
     then
       return png2bmp( barcode( p_val, p_type, p_parm ) );
+    elsif upper( p_format ) = 'GIF'
+    then
+      return png2gif( barcode( p_val, p_type, p_parm ) );
     elsif upper( p_format ) = 'PNG'
     then
       return barcode( p_val, p_type, p_parm );
@@ -4486,7 +4622,7 @@ THE SOFTWARE.
                             , dbms_lob.lobmaxsize
                             , l_dest
                             , l_src
-                            , 0
+                            , dbms_lob.default_csid
                             , l_ctx
                             , l_warn
                             );
