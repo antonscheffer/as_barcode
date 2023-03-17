@@ -4475,7 +4475,7 @@ THE SOFTWARE.
     l_hdl pls_integer;
     l_dat blob;
     l_sub_buf raw(512);
-    c_max constant pls_integer := 254;
+    c_max constant pls_integer := 126;
     --
     function little_endian( p_val pls_integer )
     return raw
