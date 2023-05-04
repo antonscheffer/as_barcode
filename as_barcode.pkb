@@ -21,6 +21,8 @@ is
 **     bmp-format
 **   Date: 2023-03-17
 **     gif-format
+**   Date: 2023-04-12
+**     allow larger datauri_barcode_svg
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2022 by Anton Scheffer
@@ -49,6 +51,46 @@ THE SOFTWARE.
   type tp_matrix is table of tp_bits index by pls_integer;
   type tp_bar_row is table of number;
   type tp_mapping is table of tp_bar_row index by pls_integer;
+  --
+  procedure converttoblob( dest_blob in out nocopy blob
+                         , src_clob in clob
+                         )
+  is
+    l_dest integer := 1;
+    l_src  integer := 1;
+    l_ctx  integer := dbms_lob.default_lang_ctx;
+    l_warn integer;
+  begin
+      dbms_lob.converttoblob( dest_blob
+                            , src_clob
+                            , dbms_lob.lobmaxsize
+                            , l_dest
+                            , l_src
+                            , dbms_lob.default_csid
+                            , l_ctx
+                            , l_warn
+                            );
+  end;
+  --
+  function base64_encode( p_src blob )
+  return clob
+  is
+    l_rv clob;
+    l_chunk_size pls_integer := 21000;
+  begin
+    for i in 0 .. trunc( ( dbms_lob.getlength( p_src ) - 1 ) / l_chunk_size )
+    loop
+      l_rv := l_rv || translate( utl_raw.cast_to_varchar2(
+                                 utl_encode.base64_encode(
+                                 dbms_lob.substr( p_src
+                                                , l_chunk_size
+                                                , 1 + i * l_chunk_size
+                                                ) ) )
+                               , 'a' || chr(10) || chr(13), 'a'
+                               );
+    end loop;
+    return l_rv;
+  end;
   --
   function xjv
     ( p_json varchar2 character set any_cs
@@ -3682,10 +3724,7 @@ THE SOFTWARE.
   return clob
   is
   begin
-    return 'data:image/png;base64,' ||
-      translate( utl_raw.cast_to_varchar2( utl_encode.base64_encode( barcode( p_val, p_type, p_parm ) ) )
-               , 'a' || chr(10) || chr(13), 'a'
-               );
+    return 'data:image/png;base64,' || base64_encode( barcode( p_val, p_type, p_parm ) );
   exception
     when others then
       -- small transparent image
@@ -4309,10 +4348,7 @@ THE SOFTWARE.
   return clob
   is
   begin
-    return 'data:image/svg+xml;base64,' ||
-      translate( utl_raw.cast_to_varchar2( utl_encode.base64_encode( utl_raw.cast_to_raw( barcode_svg( p_val, p_type, p_parm ) ) ) )
-               , 'a' || chr(10) || chr(13), 'a'
-               );
+    return 'data:image/svg+xml;base64,' || base64_encode( barcode_blob( p_val, p_type, p_parm, 'SVG' ) );
   exception
     when others then
       return 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
@@ -4600,10 +4636,6 @@ THE SOFTWARE.
   return blob
   is
     l_tmp  blob;
-    l_dest integer := 1;
-    l_src  integer := 1;
-    l_ctx  integer := dbms_lob.default_lang_ctx;
-    l_warn integer;
   begin
     if upper( p_format ) = 'BMP'
     then
@@ -4617,15 +4649,9 @@ THE SOFTWARE.
     elsif upper( p_format ) = 'SVG'
     then
       dbms_lob.createtemporary( l_tmp, true );
-      dbms_lob.converttoblob( l_tmp
-                            , barcode_svg( p_val, p_type, p_parm )
-                            , dbms_lob.lobmaxsize
-                            , l_dest
-                            , l_src
-                            , dbms_lob.default_csid
-                            , l_ctx
-                            , l_warn
-                            );
+      converttoblob( l_tmp
+                   , barcode_svg( p_val, p_type, p_parm )
+                   );
       return l_tmp;
     else
       return null;
