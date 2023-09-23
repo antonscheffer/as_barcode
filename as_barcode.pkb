@@ -23,6 +23,9 @@ is
 **     gif-format
 **   Date: 2023-04-12
 **     allow larger datauri_barcode_svg
+**   Date: 2023-09-23
+**     added "transparant" to p_parm options
+**     fixed bug for multi-byte characters in QR-code
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2022 by Anton Scheffer
@@ -466,6 +469,7 @@ THE SOFTWARE.
   is
     t_ihdr  raw(25);
     t_plte  raw(32);
+    t_trns  raw(32);
     t_idat  raw(32767);
     --
     function crc32( p_src raw )
@@ -531,8 +535,8 @@ THE SOFTWARE.
       l_tmp := lower( ltrim( l_tmp, '#') );
       l_tmp := replace( l_tmp, 'black'  , '000000' );
       l_tmp := replace( l_tmp, 'red'    , 'ff0000' );
-      l_tmp := replace( l_tmp, 'blue'   , '00ff00' );
-      l_tmp := replace( l_tmp, 'green'  , '0000ff' );
+      l_tmp := replace( l_tmp, 'green'  , '00ff00' );
+      l_tmp := replace( l_tmp, 'blue'   , '0000ff' );
       l_tmp := replace( l_tmp, 'aqua'   , '00ffff' );
       l_tmp := replace( l_tmp, 'cyan'   , '00ffff' );
       l_tmp := replace( l_tmp, 'fuchsia', 'ff00ff' );
@@ -557,6 +561,17 @@ THE SOFTWARE.
                             , nvl( parse_color( p_parm, 'dark' ) , '000000' )
                             , nvl( parse_color( p_parm, 'light' ), 'FFFFFF' )
                             );
+    if check_pos( p_parm, 'transparant' )
+    then -- make background transparent
+      t_trns := utl_raw.concat( '74524E53' -- tRNS
+                              , 'FF' -- index value 0 is not transparent
+                              , '00' -- index value 1 is fully transparent
+                              );
+      t_trns := utl_raw.concat( '00000002' -- length tRNS
+                              , t_trns
+                              , crc32( t_trns )
+                              );
+    end if;
     t_idat := utl_raw.concat( '49444154' -- IDAT
                             , method0_compress( p_dat )
                             );
@@ -567,6 +582,7 @@ THE SOFTWARE.
                          , '00000006'         -- length PLTE
                          , t_plte
                          , crc32( t_plte )
+                         , t_trns
                          , to_char( utl_raw.length( t_idat ) - 4, 'fm0XXXXXXX' )
                          , t_idat
                          , crc32( t_idat )
@@ -1300,7 +1316,7 @@ THE SOFTWARE.
       end if;
     elsif (   (   isnchar( p_val )
               and utl_i18n.raw_to_nchar( utl_i18n.string_to_raw( p_val, 'US7ASCII' ), 'US7ASCII' ) = p_val
-          )
+              )
           or (   not isnchar( p_val )
              and utl_i18n.raw_to_char( utl_i18n.string_to_raw( p_val, 'US7ASCII' ), 'US7ASCII' ) = p_val
              )
@@ -1310,7 +1326,6 @@ THE SOFTWARE.
       l_tmp := utl_i18n.string_to_raw( p_val, 'US7ASCII' );
       add_byte_data( l_tmp, l_version, l_stream );
     else -- ECI mode
-      l_version := get_version( length( p_val ), l_eclevel, 6, p_parm );
       append_bits( l_stream, 7, 4 );  -- ECI mode
       append_bits( l_stream, 26, 8 ); -- ECI Assignment number 26 = UTF8
       if check_neg( p_parm, 'double_backslash' )
@@ -1319,6 +1334,7 @@ THE SOFTWARE.
       else
         l_tmp := utl_i18n.string_to_raw( replace( p_val, '\', '\\' ), 'AL32UTF8' );
       end if;
+      l_version := get_version( utl_raw.length( l_tmp ), l_eclevel, 6, p_parm );
       add_byte_data( l_tmp, l_version, l_stream );
     end if;
     -- terminator
@@ -3806,12 +3822,12 @@ THE SOFTWARE.
     begin
       l_bg_color := '#fff';
       l_bg_color := coalesce( xjv( p_parm, 'light' )
-                            , xjv( p_parm, 'light_color' )
                             , l_bg_color
                             );
     exception when others then null;
     end;
-    l_background := '<rect fill="' || l_bg_color || '"' ||
+    l_background := '<rect fill="' || coalesce( l_bg_color, '#fff' ) || '"' ||
+                    case when check_pos( p_parm, 'transparant' ) then ' fill-opacity="0"' end ||
                     ' width=' || svg_to_char( l_width ) ||
                     ' height=' || svg_to_char( l_height ) ||
                     '/>';
@@ -3819,7 +3835,6 @@ THE SOFTWARE.
     begin
       l_fg_color := '#000';
       l_fg_color := coalesce( xjv( p_parm, 'dark' )  -- red, green, blue or hex rgb #00FF00
-                            , xjv( p_parm, 'dark_color' )
                             , l_fg_color
                             );
     exception when others then null;
