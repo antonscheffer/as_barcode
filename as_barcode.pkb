@@ -26,9 +26,20 @@ is
 **   Date: 2023-09-23
 **     added "transparant" to p_parm options
 **     fixed bug for multi-byte characters in QR-code
+**   Date: 2024-06-20
+**     added transparant to gif format
+**     fixed colors for bmp format
+**     fixed bmp and gif format for code39, code128 and itf
+**     added logo to QR in svg format
+**     added jpeg format
+**   Date: 2024-09-08
+**      added some postal 4-state barcodes
+**        * Royal Mail 4-State Customer Code
+**        * Australia Post 4-State Customer Barcode
+**        * Dutch PostNL KIX
 ******************************************************************************
 ******************************************************************************
-Copyright (C) 2016-2022 by Anton Scheffer
+Copyright (C) 2016-2024 by Anton Scheffer
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -81,6 +92,10 @@ THE SOFTWARE.
     l_rv clob;
     l_chunk_size pls_integer := 21000;
   begin
+    if p_src is null
+    then
+       return null;
+    end if;
     for i in 0 .. trunc( ( dbms_lob.getlength( p_src ) - 1 ) / l_chunk_size )
     loop
       l_rv := l_rv || translate( utl_raw.cast_to_varchar2(
@@ -436,13 +451,13 @@ THE SOFTWARE.
     return null;
   end;
   --
-  function check_int( p_parm varchar2, p_name varchar2, p_max pls_integer := null )
+  function check_int( p_parm varchar2, p_name varchar2, p_max pls_integer := null, p_min pls_integer := null )
   return pls_integer
   is
     l_int pls_integer;
   begin
     l_int := trunc( to_number( xjv( p_parm, p_name ) ) );
-    if l_int not between 0 and nvl( p_max, l_int )
+    if l_int not between nvl( p_min, 0 ) and nvl( p_max, l_int )
     then
       l_int := null;
     end if;
@@ -1226,7 +1241,7 @@ THE SOFTWARE.
       l_version pls_integer;
       l_tmp pls_integer;
     begin
-      l_version := 1;
+      l_version := coalesce( check_int( p_parm, 'version', 40, 1 ), 1 );
       while p_len > l_qr_config( l_version )( p_eclevel )( p_mode )
       loop
         l_version := l_version + 1;
@@ -2693,6 +2708,300 @@ THE SOFTWARE.
     --
   end gen_datamatrix_matrix;
   --
+  procedure gen_postal_matrix( p_val varchar2 character set any_cs
+                             , p_parm varchar2
+                             , p_matrix out tp_matrix
+                             )
+  is
+    l_val         varchar2(1000);
+    l_tracker     tp_bits;
+    l_full_height tp_bits;
+    l_ascender    tp_bits;
+    l_descender   tp_bits;
+    l_gap         tp_bits;
+    --
+    type tp_4s is table of varchar2(4) index by varchar2(1);
+    l_4s tp_4s;
+    --
+    procedure init_rm_alfabet
+    is
+    begin
+      l_4s := tp_4s
+                 ( '0' => 'TTFF', '1' => 'TDAF', '2' => 'TDFA', '3' => 'DTAF'
+                 , '4' => 'DTFA', '5' => 'DDAA', '6' => 'TADF', '7' => 'TFTF'
+                 , '8' => 'TFDA', '9' => 'DATF', 'A' => 'DADA', 'B' => 'DFTA'
+                 , 'C' => 'TAFD', 'D' => 'TFAD', 'E' => 'TFFT', 'F' => 'DAAD'
+                 , 'G' => 'DAFT', 'H' => 'DFAT', 'I' => 'ATDF', 'J' => 'ADTF'
+                 , 'K' => 'ADDA', 'L' => 'FTTF', 'M' => 'FTDA', 'N' => 'FDTA'
+                 , 'O' => 'ATFD', 'P' => 'ADAD', 'Q' => 'ADFT', 'R' => 'FTAD'
+                 , 'S' => 'FTFT', 'T' => 'FDAT', 'U' => 'AADD', 'V' => 'AFTD'
+                 , 'W' => 'AFDT', 'X' => 'FATD', 'Y' => 'FADT', 'Z' => 'FFTT'
+                 );
+    end init_rm_alfabet;
+    --
+    function apsc( p_val varchar2 )
+    return varchar2
+    is
+      l_len    pls_integer;
+      l_tmp    pls_integer;
+      l_chr    varchar2(1);
+      l_val    varchar2(1000);
+      l_digits boolean;
+      l_nc     tp_4s;
+      l_cc     tp_4s;
+      l_rs_in  tp_bits;
+      l_rs_out tp_bits;
+    begin
+      l_len := coalesce( length( p_val ), 0 );
+      if l_len < 8 or ltrim( substr( p_val, 1, 8 ), '0123456789' ) is not null
+      then
+        raise_application_error( -20001, 'Australian POST barcode should start with a 8 digits DPID' );
+      end if;
+      l_nc :=
+        tp_4s( '0' => '00', '1' => '01', '2' => '02', '3' => '10', '4' => '11'
+             , '5' => '12', '6' => '20', '7' => '21', '8' => '22', '9' => '30'
+             );
+      l_cc :=
+        tp_4s( 'A' => '000', 'B' => '001', 'C' => '002', 'D' => '010'
+             , 'E' => '011', 'F' => '012', 'G' => '020', 'H' => '021'
+             , 'I' => '022', 'J' => '100', 'K' => '101', 'L' => '102'
+             , 'M' => '110', 'N' => '111', 'O' => '112', 'P' => '120'
+             , 'Q' => '121', 'R' => '122', 'S' => '200', 'T' => '201'
+             , 'U' => '202', 'V' => '210', 'W' => '211', 'X' => '212'
+             , 'Y' => '220', 'Z' => '221', '0' => '222', '1' => '300'
+             , '2' => '301', '3' => '302', '4' => '310', '5' => '311'
+             , '6' => '312', '7' => '320', '8' => '321', '9' => '322'
+             , 'a' => '023', 'b' => '030', 'c' => '031', 'd' => '032'
+             , 'e' => '033', 'f' => '103', 'g' => '113', 'h' => '123'
+             , 'i' => '130', 'j' => '131', 'k' => '132', 'l' => '133'
+             , 'm' => '203', 'n' => '213', 'o' => '223', 'p' => '230'
+             , 'q' => '231', 'r' => '232', 's' => '233', 't' => '303'
+             , 'u' => '313', 'v' => '323', 'w' => '330', 'x' => '331'
+             , 'y' => '332', 'z' => '333', ' ' => '003', '#' => '013'
+             );
+      --
+      if l_len = 8
+      then   -- Standard Customer Barcode
+        l_val := l_val || l_nc( '1' ) || l_nc( '1' );
+      else
+        l_digits := ltrim( substr( p_val, 9 ), '0123456789' ) is null;
+        if    ( l_digits and l_len <= 16 )
+           or ( not l_digits and l_len <= 13 )
+        then -- Customer Barcode 2
+          l_val := l_val || l_nc( '5' ) || l_nc( '9' );
+        else -- Customer Barcode 3
+          l_val := l_val || l_nc( '6' ) || l_nc( '2' );
+        end if;
+      end if;
+      --
+      for i in 1 .. 8
+      loop
+        l_val := l_val || l_nc( substr( p_val, i, 1 ) );
+      end loop;
+      --
+      for i in 9 .. l_len
+      loop
+        if l_digits
+        then
+          l_val := l_val || l_nc( substr( p_val, i, 1 ) );
+        else
+          l_val := l_val || l_cc( substr( p_val, i, 1 ) );
+        end if;
+      end loop;
+      l_tmp := length( l_val );
+      if l_tmp > 51
+      then
+        raise_application_error( -20001, 'Australian POST barcode is too long' );
+      end if;
+      for i in l_tmp + 1 .. case
+                              when l_tmp <= 21 then 21
+                              when l_tmp <= 36 then 36
+                              when l_tmp <= 51 then 51
+                            end
+      loop
+        l_val := l_val || '3'; -- filler
+      end loop;
+      --
+      for i in 0 .. length( l_val ) / 3 - 1
+      loop
+        l_rs_in( i ) := substr( l_val, 1 + 3 * i, 1 ) * 16
+                      + substr( l_val, 2 + 3 * i, 1 ) * 4
+                      + substr( l_val, 3 + 3 * i, 1 );
+      end loop;
+      l_rs_out := reed_solomon( l_rs_in, 67, 64, 4 );
+      for i in l_rs_out.first .. l_rs_out.last
+      loop
+        l_tmp := l_rs_out( i );
+        l_val := l_val || trunc( l_tmp / 16 ) || mod( trunc( l_tmp / 4 ), 4 ) || mod( l_tmp, 4 );
+      end loop;
+      --
+      l_val := '13' || l_val || '13';  -- start stop
+      if length( l_val ) not in ( 37, 52, 67 )
+      then
+        raise_application_error( -20001, 'invalid Australian POST barcode' );
+      end if;
+--dbms_output.put_line( length( l_val ) );
+--dbms_output.put_line( replace( replace( replace( replace( l_val, '0', 'F' ), '1','A' ), '2', 'D' ), '3', 'T' ) );
+      return l_val;
+    end apsc;
+    --
+    function rm4scc( p_val varchar2 )
+    return varchar2
+    is
+      l_chr varchar2(1);
+      l_val varchar2(1000);
+      type tp_checksum is table of pls_integer index by varchar2(1);
+      l_top    tp_checksum;
+      l_bottom tp_checksum;
+      l_cs        pls_integer;
+      l_top_cs    pls_integer := 0;
+      l_bottom_cs pls_integer := 0;
+    begin
+      init_rm_alfabet;
+      --
+      l_top := tp_checksum
+                 ( '0' => 1, '1' => 1, '2' => 1, '3' => 1, '4' => 1, '5' => 1
+                 , '6' => 2, '7' => 2, '8' => 2, '9' => 2, 'A' => 2, 'B' => 2
+                 , 'C' => 3, 'D' => 3, 'E' => 3, 'F' => 3, 'G' => 3, 'H' => 3
+                 , 'I' => 4, 'J' => 4, 'K' => 4, 'L' => 4, 'M' => 4, 'N' => 4
+                 , 'O' => 5, 'P' => 5, 'Q' => 5, 'R' => 5, 'S' => 5, 'T' => 5
+                 , 'U' => 0, 'V' => 0, 'W' => 0, 'X' => 0, 'Y' => 0, 'Z' => 0
+                 );
+      l_bottom := tp_checksum
+                    ( '0' => 1, '1' => 2, '2' => 3, '3' => 4, '4' => 5, '5' => 0
+                    , '6' => 1, '7' => 2, '8' => 3, '9' => 4, 'A' => 5, 'B' => 0
+                    , 'C' => 1, 'D' => 2, 'E' => 3, 'F' => 4, 'G' => 5, 'H' => 0
+                    , 'I' => 1, 'J' => 2, 'K' => 3, 'L' => 4, 'M' => 5, 'N' => 0
+                    , 'O' => 1, 'P' => 2, 'Q' => 3, 'R' => 4, 'S' => 5, 'T' => 0
+                    , 'U' => 1, 'V' => 2, 'W' => 3, 'X' => 4, 'Y' => 5, 'Z' => 0
+                    );
+      --
+      l_val := l_val || 'A';  -- start code
+      for i in 1 .. length( p_val )
+      loop
+        l_chr := substr( p_val, i, 1 );
+        l_val := l_val || l_4s( l_chr );
+        l_top_cs := l_top_cs + l_top( l_chr );
+        l_bottom_cs := l_bottom_cs + l_bottom( l_chr );
+      end loop;
+      --
+      l_cs :=  6 * mod( l_top_cs - 1, 6 ) + mod( l_bottom_cs - 1, 6 );
+      l_chr := l_4s.first;
+      for i in 0 .. l_4s.count - 1
+      loop
+        exit when i = l_cs;
+        l_chr := l_4s.next( l_chr );
+      end loop;
+      l_val := l_val || l_4s( l_chr );
+      l_val := l_val || 'F';  -- stop code
+      --
+      return l_val;
+    end rm4scc;
+    --
+    function kix( p_val varchar2 )
+    return varchar2
+    is
+      l_pos pls_integer;
+      l_val varchar2(1000);
+    begin
+      init_rm_alfabet;
+      --
+      for i in 1 .. 6
+      loop
+        l_val := l_val || l_4s( substr( p_val, i, 1 ) );
+      end loop;
+      --
+      l_pos := 7;
+      for i in 1 .. 5
+      loop
+        exit when substr( p_val, l_pos, 1 ) is null
+               or ltrim( substr( p_val, l_pos, 1 ), '0123456789' ) is not null;
+        l_val := l_val || l_4s( substr( p_val, l_pos, 1 ) );
+        l_pos := l_pos + 1;
+      end loop;
+      if l_pos = 7
+      then
+        raise_application_error( -20001, 'KIX 4 State Postal barcode contains no valid house number' );
+      end if;
+      --
+      if length( substr( p_val, l_pos ) ) > 1
+      then
+        if substr( p_val, l_pos, 1 ) != 'X'
+        then
+          raise_application_error( -20001, 'KIX 4 State Postal barcode should use "X" as separator' );
+        end if;
+        l_val := l_val || l_4s( 'X' );
+        l_pos := l_pos + 1;
+        for i in 1 .. 6
+        loop
+          exit when substr( p_val, l_pos, 1 ) is null;
+          l_val := l_val || l_4s( substr( p_val, l_pos, 1 ) );
+          l_pos := l_pos + 1;
+        end loop;
+      end if;
+      --
+      return l_val;
+    end kix;
+  begin
+    if check_pos( p_parm, 'rm4scc' ) or check_pos( p_parm, 'cbc' )
+    then
+      l_val := rm4scc( replace( upper( p_val ), ' ' ) );
+    elsif check_pos( p_parm, 'apsc' )
+    then
+      l_val := apsc( p_val );
+    elsif check_pos( p_parm, 'kix' )
+    then
+      l_val := kix( upper( p_val ) );
+    else
+      l_val := upper( l_val );
+    end if;
+    for j in 0 .. 9
+    loop
+      l_gap( j ) := 0;
+    end loop;
+    l_tracker := l_gap;
+    l_tracker( 4 ) := 1;
+    l_tracker( 5 ) := 1;
+    l_ascender := l_gap;
+    for j in 0 .. 5
+    loop
+      l_ascender( j ) := 1;
+    end loop;
+    l_descender := l_gap;
+    for j in 4 .. 9
+    loop
+      l_descender( j ) := 1;
+    end loop;
+    for j in 0 .. 9
+    loop
+      l_full_height( j ) := 1;
+    end loop;
+    --
+    p_matrix( 0 ) := l_gap;
+    for i in 1 .. length( l_val )
+    loop
+      if substr( l_val, i, 1 ) in ( 'F', '0', 'H' )
+      then
+        p_matrix( 2 * i - 1 ) := l_full_height;
+      elsif substr( l_val, i, 1 ) in ( 'A', '1' )
+      then
+        p_matrix( 2 * i - 1 ) := l_ascender;
+      elsif substr( l_val, i, 1 ) in ( 'D', '2' )
+      then
+        p_matrix( 2 * i - 1 ) := l_descender;
+      elsif substr( l_val, i, 1 ) in ( 'T', '3' )
+      then
+        p_matrix( 2 * i - 1 ) := l_tracker;
+      else
+        raise_application_error( -20001, 'Invalid value for 4 State Postal barcode' );
+      end if;
+      p_matrix( 2 * i ) := l_gap;
+    end loop;
+    --
+    add_quiet( p_matrix, p_parm, 2 );
+    --
+  end gen_postal_matrix;
+  --
   procedure gen_code128( p_val varchar2 character set any_cs
                        , p_parm varchar2
                        , p_row in out nocopy tp_bar_row
@@ -3223,6 +3532,7 @@ THE SOFTWARE.
                             , l_width + 1
                             , '00' || to_png_px( tp_bar_row( l_width ) )
                             );
+        l_height := l_height + 1;
       end loop;
     end if;
     --
@@ -3239,6 +3549,7 @@ THE SOFTWARE.
                             , l_width + 1
                             , '00' || to_png_px( tp_bar_row( l_width ) )
                             );
+        l_height := l_height + 1;
       end loop;
     end if;
     --
@@ -3267,7 +3578,7 @@ THE SOFTWARE.
                         , '00' || to_png_px( tp_bar_row( -l_width ) )
                         );
     --
-    return generate_png( l_dat, l_width, l_height + l_fh + 1 + 2 * c_bearer * l_scale, p_parm );
+    return generate_png( l_dat, l_width, l_height + 1, p_parm );
   end png_bar;
   --
   function code39( p_val varchar2, p_parm varchar2 )
@@ -3676,6 +3987,15 @@ THE SOFTWARE.
     return png_matrix( l_matrix, p_parm );
   end;
   --
+  function postal( p_val varchar2 character set any_cs, p_parm varchar2 )
+  return raw
+  is
+    l_matrix tp_matrix;
+  begin
+    gen_postal_matrix( p_val, p_parm, l_matrix );
+    return png_matrix( l_matrix, p_parm );
+  end;
+  --
   function barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
   return raw
   is
@@ -3714,11 +4034,19 @@ THE SOFTWARE.
       elsif upper( p_type ) like '%UPC%A%'
       then
         return upca( p_val, p_parm );
+      elsif upper( p_type ) like '%POST%' or upper( p_type ) like '%4%S%'
+      then
+        return postal( p_val, p_parm );
       end if;
     end if;
-    return '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D4944415478DA63F8FF9FA11E00077D027EFDBCECEE0000000049454E44AE426082';
+    raise value_error;
   exception
     when others then
+      if check_pos( p_parm, 'raise' )
+      then
+        raise;
+      end if;
+      -- small transparent 1x1 image
       return '89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D4944415478DA63F8FF9FA11E00077D027EFDBCECEE0000000049454E44AE426082';
   end;
 --
@@ -3736,14 +4064,29 @@ THE SOFTWARE.
     wpg_docload.download_file( p_blob => t_img );
   end;
 --
-  function datauri_barcode( p_val varchar2 character set any_cs, p_type varchar2, p_parm varchar2 := null )
+  function datauri_barcode( p_val varchar2 character set any_cs
+                          , p_type varchar2
+                          , p_parm varchar2 := null
+                          , p_format varchar2 := null
+                          )
   return clob
   is
   begin
-    return 'data:image/png;base64,' || base64_encode( barcode( p_val, p_type, p_parm ) );
+    return
+      case coalesce( upper( p_format ), 'PNG' )
+        when 'PNG' then 'data:image/png;base64,'     || base64_encode( barcode( p_val, p_type, p_parm ) )
+        when 'SVG' then 'data:image/svg+xml;base64,' || base64_encode( barcode_blob( p_val, p_type, p_parm, 'SVG' ) )
+        when 'BMP' then 'data:image/bmp;base64,'     || base64_encode( barcode_blob( p_val, p_type, p_parm, 'BMP' ) )
+        when 'GIF' then 'data:image/gif;base64, '    || base64_encode( barcode_blob( p_val, p_type, p_parm, 'GIF' ) )
+        when 'JPG' then 'data:image/jpeg;base64,'    || base64_encode( barcode_blob( p_val, p_type, p_parm, 'JPG' ) )
+      end;
   exception
     when others then
-      -- small transparent image
+      if check_pos( p_parm, 'raise' )
+      then
+        raise;
+      end if;
+      -- small transparent 1x1 image
       return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQYV2NgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=';
   end;
 --
@@ -3857,8 +4200,9 @@ THE SOFTWARE.
     exception when others then null;
     end;
     --
-    return ( '<svg xmlns="http://www.w3.org/2000/svg"' ||
-             l_svg_size || l_svg_id || l_viewbox || '>' ||
+    return ( '<svg xmlns="http://www.w3.org/2000/svg"'     ||
+             ' xmlns:xlink="http://www.w3.org/1999/xlink"' ||
+             l_svg_size || l_svg_id || l_viewbox || '>'    ||
              l_background || l_foreground
            ) || p_svg || '</g></svg>';
   end;
@@ -4171,7 +4515,11 @@ THE SOFTWARE.
     return svg_header( l_svg, p_parm, p_width => l_x, p_height => l_h1 + l_h2, p_font => true );
   end upca_svg;
   --
-  function svg_matrix( p_matrix in out tp_matrix, p_parm varchar2 )
+  function svg_matrix( p_matrix in out tp_matrix
+                     , p_parm      varchar2
+                     , p_logo      blob     := null
+                     , p_logo_href varchar2 := null
+                     )
   return clob
   is
     l_svg clob;
@@ -4192,8 +4540,278 @@ THE SOFTWARE.
     end loop;
     p_matrix.delete;
     --
-    return svg_header( l_svg, p_parm, p_width => l_hsz, p_height => l_vsz );
-  end;
+    if p_logo is not null or p_logo_href is not null
+    then
+      declare
+        l_logo_pct      number;
+        l_x             number;
+        l_y             number;
+        l_m             number;
+        l_width         number;
+        l_height        number;
+        l_radius        number;
+        l_logo_width    number;
+        l_logo_height   number;
+        l_logo_corner   number;
+        l_data          varchar2(100);
+        l_logo_bg_color varchar2(100);
+        --
+        function blob2num( p_blob blob, p_len integer, p_pos integer )
+        return number
+        is
+        begin
+          return to_number( rawtohex( dbms_lob.substr( p_blob, p_len, p_pos ) ), 'xxxxxxxx' );
+        end;
+        --
+        function datauri2raw( p_datauri varchar2 )
+        return raw
+        is
+          l_ind pls_integer;
+        begin
+          l_ind := instr( p_datauri, ';base64,' );
+          if    p_datauri is null
+             or l_ind < 15
+             or instr( ltrim( p_datauri ), 'data:image/' ) != 1
+          then
+            return null;
+          end if;
+          return utl_encode.base64_decode( utl_raw.cast_to_raw( substr( p_datauri, l_ind + 8 ) ) );
+        end datauri2raw;
+        --
+        procedure parse_img( p_img_blob blob
+                           , p_width  out pls_integer
+                           , p_height out pls_integer
+                           )
+        is
+          l_buf  raw(32767);
+          l_len  integer;
+          l_ind  integer;
+          l_tmp  integer;
+          l_hex  varchar2(100);
+          l_svg  varchar2(32767);
+          l_vb   varchar2(32767);
+          l_root xmltype;
+          l_att  xmltype;
+        begin
+          if rawtohex( dbms_lob.substr( p_img_blob, 8, 1 ) ) = '89504E470D0A1A0A'  -- PNG
+          then
+            l_data := 'data:image/png;base64,';
+            l_ind := 9;
+            loop
+              l_len := blob2num( p_img_blob, 4, l_ind );  -- length
+              exit when l_len is null or l_ind > dbms_lob.getlength( p_img_blob );
+              case utl_raw.cast_to_varchar2( dbms_lob.substr( p_img_blob, 4, l_ind + 4 ) )  -- Chunk type
+                when 'IHDR'
+                then
+                  p_width  := blob2num( p_img_blob, 4, l_ind + 8 );
+                  p_height := blob2num( p_img_blob, 4, l_ind + 12 );
+                when 'IEND'
+                then
+                  exit;
+                else
+                  null;
+              end case;
+              l_ind := l_ind + 4 + 4 + l_len + 4;  -- Length + Chunk type + Chunk data + CRC
+            end loop;
+          elsif dbms_lob.substr( p_img_blob, 3, 1 ) = '474946' -- GIF
+          then
+            l_data := 'data:image/gif;base64,';
+            l_tmp := to_number( dbms_lob.substr( p_img_blob, 1, 11 ), 'XX' );  --  Logical Screen Descriptor
+            if bitand( l_tmp, 128 ) = 128
+            then
+              l_ind := 14 + 3 * power( 2, bitand( l_tmp, 7 ) + 1 );
+            else
+              l_ind := 14;
+            end if;
+            --
+            loop
+              case dbms_lob.substr( p_img_blob, 1, l_ind )
+                when hextoraw( '3B' )           -- trailer
+                then
+                  exit;
+                when hextoraw( '21' )           -- extension
+                then
+                  l_ind := l_ind + 2;           -- skip sentinel + label
+                  loop
+                    l_len := blob2num( p_img_blob, 1, l_ind ); -- Block Size
+                    exit when l_len = 0;
+                    l_ind := l_ind + 1 + l_len; -- skip Block Size + Data Sub-block
+                  end loop;
+                  l_ind := l_ind + 1;           -- skip last Block Size
+                when hextoraw( '2C' )           -- image
+                then
+                  p_width := utl_raw.cast_to_binary_integer( dbms_lob.substr( p_img_blob, 2, l_ind + 5 )
+                                                       , utl_raw.little_endian
+                                                       );
+                  p_height := utl_raw.cast_to_binary_integer( dbms_lob.substr( p_img_blob, 2, l_ind + 7 )
+                                                        , utl_raw.little_endian
+                                                        );
+                  exit;
+                else
+                  exit;
+              end case;
+            end loop;
+          elsif dbms_lob.substr( p_img_blob, 4, 1 ) = '3C737667' -- <svg
+          then
+            l_data := 'data:image/svg+xml;base64,';
+            l_buf := dbms_lob.substr( p_img_blob, 1000, 1 );
+            l_svg := utl_raw.cast_to_varchar2( l_buf );
+            l_svg := substr( l_svg, 1, instr( l_svg, '>' ) - 1 ) || ' />';
+            begin
+              l_root := xmltype( l_svg );
+              l_att := l_root.extract( '//@*:width' );
+              if l_att is not null
+              then
+                p_width := round( to_number( l_att.getstringval(), '9999999.9999' ) );
+              end if;
+              l_att := l_root.extract( '//@*:height' );
+              if l_att is not null
+              then
+                p_height := round( to_number( l_att.getstringval(), '9999999.9999' ) );
+              end if;
+              if p_width is null or p_height is null
+              then
+                l_att := l_root.extract( '//@*:viewBox' );
+                if l_att is not null
+                then
+                  l_vb := trim( replace( l_att.getstringval(), ',', ' ' ) );
+                  l_vb := ltrim( substr( l_vb, instr( l_vb, ' ' ) ) ); -- skip min-x
+                  l_vb := ltrim( substr( l_vb, instr( l_vb, ' ' ) ) ); -- skip min-y
+                  p_width := round( to_number( substr( l_vb, 1, instr( l_vb, ' ' ) - 1 ), '9999999.9999' ) );
+                  l_vb := ltrim( substr( l_vb, instr( l_vb, ' ' ) ) ); -- skip width
+                  p_height := round( to_number( l_vb, '9999999.9999' ) );
+                end if;
+              end if;
+            exception
+              when others then null;
+            end;
+            if p_width is null or p_height is null
+            then
+              p_width  := 1;
+              p_height := 1;
+            end if;
+          elsif dbms_lob.substr( p_img_blob, 2, 1 ) = '424D' -- BM
+          then
+            l_data := 'data:image/bmp;base64,';
+            p_width  := to_number( utl_raw.reverse( dbms_lob.substr( p_img_blob, 4, 19 ) ), 'XXXXXXXX' );
+            p_height := to_number( utl_raw.reverse( dbms_lob.substr( p_img_blob, 4, 23 ) ), 'XXXXXXXX' );
+          else
+            if (  dbms_lob.substr( p_img_blob, 2, 1 ) != hextoraw( 'FFD8' )                                      -- SOI Start of Image
+               or dbms_lob.substr( p_img_blob, 2, dbms_lob.getlength( p_img_blob ) - 1 ) != hextoraw( 'FFD9' )   -- EOI End of Image
+               )
+            then  -- this is not a jpg I can handle
+              return;
+            end if;
+            --
+            l_data := 'data:image/jpeg;base64,';
+            l_hex := rawtohex( dbms_lob.substr( p_img_blob, 4, 3 ) );
+            if substr( l_hex, 1, 4 ) in ( 'FFE0'  -- a APP0 jpeg JFIF segment
+                                        , 'FFE1'  -- a APP1 jpeg EXIF segment
+                                        )
+            then
+              l_ind := 5 + to_number( substr( l_hex, 5 ), 'XXXX' );
+              loop
+                l_hex := rawtohex( dbms_lob.substr( p_img_blob, 4, l_ind ) );
+                exit when substr( l_hex, 1, 4 ) = 'FFD9'  -- EOI End Of Image
+                       or substr( l_hex, 1, 2 ) != 'FF';  -- no marker
+                if substr( l_hex, 1, 4 ) in ( 'FFD0', 'FFD1', 'FFD2', 'FFD3', 'FFD4', 'FFD5', 'FFD6', 'FFD7' -- RSTn
+                                            , 'FF01'  -- TEM reserved
+                                            )
+                then
+                  l_ind := l_ind + 2;
+                else
+                  if substr( l_hex, 1, 4 ) in ( 'FFC0' -- SOF0 (Start Of Frame 0) Baseline DCT
+                                              , 'FFC1' -- SOF1 (Start Of Frame 1) Extended Sequential DCT
+                                              , 'FFC2' -- SOF2 (Start Of Frame 2) Progressive DCT
+                                              )
+                  then
+                    l_hex := rawtohex( dbms_lob.substr( p_img_blob, 4, l_ind + 5 ) );
+                    p_width  := to_number( substr( l_hex, 5, 4 ), 'XXXX' );
+                    p_height := to_number( substr( l_hex, 1, 4 ), 'XXXX' );
+                    exit;
+                  end if;
+                  l_ind := l_ind + 2 + to_number( substr( l_hex, 5 ), 'XXXX' );
+                end if;
+              end loop;
+            end if;
+          end if;
+        end parse_img;
+      begin
+        if p_logo is not null
+        then
+          parse_img( p_logo, l_logo_width, l_logo_height );
+        else
+          parse_img( datauri2raw( p_logo_href ), l_logo_width, l_logo_height );
+        end if;
+        l_logo_pct := coalesce( to_number( jv( p_parm, 'logo_pct' ) ), 10 );
+        if l_logo_width is not null and l_logo_height is not null
+        then
+          if l_logo_width > l_logo_height
+          then
+            l_width  := l_hsz * l_logo_pct / 100;
+            l_height := l_width * l_logo_height / l_logo_width;
+            l_radius := l_width / 2;
+          else
+            l_height := l_vsz * l_logo_pct / 100;
+            l_width  := l_height * l_logo_width / l_logo_height;
+            l_radius := l_height / 2;
+          end if;
+        else
+          l_width  := l_hsz * l_logo_pct / 100;
+          l_height := l_vsz * l_logo_pct / 100;
+          l_radius := l_width / 2;
+        end if;
+        l_x := ( l_hsz - l_width ) / 2;
+        l_y := ( l_vsz - l_height ) / 2;
+        l_m := coalesce( jv( p_parm, 'logo_marge' ), 0 );
+        l_logo_corner := coalesce( jv( p_parm, 'logo_corner' ), l_m );
+        l_logo_bg_color := jv( p_parm, 'logo_bg_color' );
+        --
+        l_svg := l_svg || '<g>';
+        if l_logo_bg_color is not null
+        then
+          if check_pos( p_parm, 'logo_circle' )
+          then
+            l_svg := l_svg || (
+              '<circle' ||
+              ' cx=' || svg_to_char( l_hsz / 2 )                ||
+              ' cy=' || svg_to_char( l_vsz / 2  )               ||
+              ' r='   || svg_to_char( l_radius + l_m / 2) ||
+              ' fill="' || l_logo_bg_color || '"' ||
+              ' />' );
+          else
+            l_svg := l_svg || (
+              '<rect' ||
+              ' x=' || svg_to_char( l_x - l_m )                ||
+              ' y=' || svg_to_char( l_y - l_m  )               ||
+              ' width='   || svg_to_char( l_width  + 2 * l_m ) ||
+              ' height='  || svg_to_char( l_height + 2 * l_m ) ||
+              ' fill="' || l_logo_bg_color || '"' ||
+              case when l_logo_corner > 0 then ' rx=' || svg_to_char( l_logo_corner ) end ||
+              ' />' );
+          end if;
+        end if;
+        if (   l_data is not null
+           and p_logo is not null
+           ) or p_logo_href is not null
+        then
+          l_svg := l_svg || (
+            '<image x=' || svg_to_char( l_x ) || ' y=' || svg_to_char( l_y ) ||
+            ' width='   || svg_to_char( l_width )  ||
+            ' height='  || svg_to_char( l_height ) ||
+            ' xlink:href="' ) ||
+            case
+              when l_data is not null and p_logo is not null
+                then l_data || base64_encode( p_logo )
+              else p_logo_href
+            end || '" />';
+        end if;
+        l_svg := l_svg || '</g>';
+      end;
+    end if;
+    --
+   return svg_header( l_svg, p_parm, p_width => l_hsz, p_height => l_vsz );
+  end svg_matrix;
   --
   function svg_bar( p_row in out nocopy tp_bar_row
                   , p_parm varchar2
@@ -4277,13 +4895,15 @@ THE SOFTWARE.
   --
   function qrcode_svg( p_val varchar2 character set any_cs
                      , p_parm varchar2
+                     , p_logo blob
+                     , p_logo_href varchar2 := null
                      )
   return clob
   is
     l_matrix tp_matrix;
   begin
     gen_qrcode_matrix( p_val, p_parm, l_matrix );
-    return svg_matrix( l_matrix, p_parm );
+    return svg_matrix( l_matrix, p_parm, p_logo, p_logo_href );
   end;
   --
   function aztec_svg( p_val varchar2 character set any_cs
@@ -4308,9 +4928,20 @@ THE SOFTWARE.
     return svg_matrix( l_matrix, p_parm );
   end;
   --
+  function postal_svg( p_val varchar2 character set any_cs, p_parm varchar2 )
+  return clob
+  is
+    l_matrix tp_matrix;
+  begin
+    gen_postal_matrix( p_val, p_parm, l_matrix );
+    return svg_matrix( l_matrix, p_parm );
+  end;
+  --
   function barcode_svg( p_val varchar2 character set any_cs
                       , p_type varchar2
                       , p_parm varchar2 := null
+                      , p_logo blob := null
+                      , p_logo_href varchar2 := null
                       )
   return clob
   is
@@ -4320,7 +4951,7 @@ THE SOFTWARE.
     then
       if upper( p_type ) like 'QR%'
       then
-        return qrcode_svg( p_val, p_parm );
+        return qrcode_svg( p_val, p_parm, p_logo, p_logo_href );
       elsif upper( p_type ) like 'AZ%'
       then
         return aztec_svg( p_val, p_parm );
@@ -4348,34 +4979,47 @@ THE SOFTWARE.
       elsif upper( p_type ) like '%UPC%A%'
       then
         return upca_svg( p_val, p_parm );
+      elsif upper( p_type ) like '%POST%' or upper( p_type ) like '%4%S%'
+      then
+        return postal_svg( p_val, p_parm );
       end if;
     end if;
-    return l_empty_svg;
+    raise value_error;
   exception
     when others then
+      if check_pos( p_parm, 'raise' )
+      then
+        raise;
+      end if;
       return l_empty_svg;
   end;
   --
   function datauri_barcode_svg( p_val varchar2 character set any_cs
                               , p_type varchar2
                               , p_parm varchar2 := null
+                              , p_logo blob := null
+                              , p_logo_href varchar2 := null
                               )
   return clob
   is
   begin
-    return 'data:image/svg+xml;base64,' || base64_encode( barcode_blob( p_val, p_type, p_parm, 'SVG' ) );
+    return 'data:image/svg+xml;base64,' || base64_encode( barcode_blob( p_val, p_type, p_parm, 'SVG', p_logo, p_logo_href ) );
   exception
     when others then
+      if check_pos( p_parm, 'raise' )
+      then
+        raise;
+      end if;
+      -- empty svg
       return 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
   end;
   --
-  function png2bmp( p_png raw )
+  function png2bmp( p_png raw, p_parm varchar2 := null )
   return blob
   is
     l_len pls_integer;
     l_idx pls_integer;
     l_tmp raw(32767);
-    l_bmp blob;
     l_width  pls_integer;
     l_height pls_integer;
     l_color1 raw(4);
@@ -4383,6 +5027,7 @@ THE SOFTWARE.
     l_hdl pls_integer;
     l_dat blob;
     l_ls  pls_integer;
+    l_bmp blob;
     l_pad raw(4);
     l_line raw(32767);
     l_byte pls_integer;
@@ -4420,14 +5065,24 @@ THE SOFTWARE.
     then
       return null;
     end if;
-    l_color1 := utl_raw.substr( l_tmp, 5, 3 );
-    l_color2 := utl_raw.substr( l_tmp, 8, 3 );
+    l_color1 := utl_raw.reverse( utl_raw.substr( l_tmp, 5, 3 ) );
+    l_color2 := utl_raw.reverse( utl_raw.substr( l_tmp, 8, 3 ) );
     --
     l_tmp := utl_raw.substr( p_png, l_idx, 4 );
     l_len := to_number( l_tmp, 'XXXXXXXX' );
     l_idx := l_idx + 4;
     l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
     l_idx := l_idx + 4 + l_len + 4;
+    --
+    if utl_raw.substr( l_tmp, 1, 4 ) = '74524E53' -- tRNS
+    then
+      l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+      l_len := to_number( l_tmp, 'XXXXXXXX' );
+      l_idx := l_idx + 4;
+      l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+      l_idx := l_idx + 4 + l_len + 4;
+    end if;
+    --
     if utl_raw.substr( l_tmp, 1, 4 ) != '49444154' -- IDAT
     then
       return null;
@@ -4512,19 +5167,20 @@ THE SOFTWARE.
     return l_bmp;
   end png2bmp;
   --
-  function png2gif( p_png raw )
+  function png2gif( p_png raw, p_parm varchar2 := null )
   return blob
   is
     l_len pls_integer;
     l_idx pls_integer;
     l_tmp raw(32767);
-    l_gif blob;
     l_width  pls_integer;
     l_height pls_integer;
     l_color1 raw(4);
     l_color2 raw(4);
     l_hdl pls_integer;
     l_dat blob;
+    l_transparant boolean;
+    l_gif blob;
     l_sub_buf raw(512);
     c_max constant pls_integer := 126;
     --
@@ -4569,6 +5225,17 @@ THE SOFTWARE.
     l_idx := l_idx + 4;
     l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
     l_idx := l_idx + 4 + l_len + 4;
+    --
+    if utl_raw.substr( l_tmp, 1, 4 ) = '74524E53' -- tRNS
+    then
+      l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+      l_len := to_number( l_tmp, 'XXXXXXXX' );
+      l_idx := l_idx + 4;
+      l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+      l_idx := l_idx + 4 + l_len + 4;
+      l_transparant := true;
+    end if;
+    --
     if utl_raw.substr( l_tmp, 1, 4 ) != '49444154' -- IDAT
     then
       return null;
@@ -4589,15 +5256,16 @@ THE SOFTWARE.
     dbms_lob.createtemporary( l_gif, true );
     dbms_lob.writeappend
       ( l_gif
-      , 29
+      , 29 + case when l_transparant then 8 else 0 end
       , utl_raw.concat( '474946383961' -- GIF89a
                       , little_endian( l_width )
                       , little_endian( l_height )
-                      , '80' -- global colortable with 2 entries
-                      , '00' -- background color index
-                      , '00' -- aspect ratio
+                      , '80' || -- global colortable with 2 entries
+                        '00' ||-- background color index
+                        '00' -- aspect ratio
                       , l_color1
                       , l_color2
+                      , case when l_transparant then '21F9040100000100' end
                       , '2C00000000' -- image descriptor, left position 0, top position  0
                       , little_endian( l_width )
                       , little_endian( l_height )
@@ -4643,10 +5311,753 @@ THE SOFTWARE.
     return l_gif;
   end png2gif;
   --
-  function barcode_blob( p_val    varchar2 character set any_cs
-                       , p_type   varchar2
-                       , p_parm   varchar2 := null
-                       , p_format varchar2 := 'BMP'
+  function png2jpg( p_png raw, p_parm varchar2 := null )
+  return blob
+  is
+    l_len pls_integer;
+    l_idx pls_integer;
+    l_tmp raw(32767);
+    l_width  pls_integer;
+    l_height pls_integer;
+    l_hdl pls_integer;
+    l_dat blob;
+    l_transparant boolean;
+    l_jpg blob;
+    l_m tp_matrix;
+    l_dqt varchar2(1000);
+    l_dht varchar2(32767);
+    type tp_tn is table of number index by pls_integer;
+    type tp_mn is table of tp_tn index by pls_integer;
+    type tp_tm is table of tp_mn index by pls_integer;
+    l_divisors   tp_mn;
+    l_color_comp tp_mn;
+    --
+    l_huffm_buf     number;
+    l_huffm_bits    pls_integer;
+    l_natural_order tp_tn;
+    l_lastDCvalue   tp_tn;
+    l_DC_AC_matrix  tp_tm;
+    --
+    function aspect_ratio( p_width pls_integer, p_height pls_integer )
+    return varchar2
+    is
+      l_d pls_integer;
+      l_n pls_integer;
+      l_prime pls_integer;
+      type tp_primes is table of pls_integer;
+      l_primes tp_primes;
+    begin
+      l_primes := tp_primes( 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97 );
+      if p_width > p_height
+      then
+        l_n := p_width;
+        l_d := p_height;
+      else
+        l_d := p_width;
+        l_n := p_height;
+      end if;
+      for i in 1 .. l_primes.count
+      loop
+        l_prime := l_primes( i );
+        while  l_d - trunc( l_d / l_prime ) * l_prime = 0
+           and l_n - trunc( l_n / l_prime ) * l_prime = 0
+        loop
+          l_d := l_d / l_prime;
+          l_n := l_n / l_prime;
+        end loop;
+      end loop;
+      if p_width > p_height
+      then
+        return '00' || to_char( l_n, 'fm0XXX' ) || to_char( l_d, 'fm0XXX' );
+      else
+        return '00' || to_char( l_d, 'fm0XXX' ) || to_char( l_n, 'fm0XXX' );
+      end if;
+    end aspect_ratio;
+    --
+    procedure init_matrix( p_quality pls_integer )
+    is
+      l_tmp     pls_integer;
+      l_quality pls_integer;
+      l_lum     varchar2(256);
+      l_chrom   varchar2(256);
+      type tp_dqt_init is table of number;
+      l_luminance    tp_dqt_init;
+      l_chrominance  tp_dqt_init;
+      l_zigzag       tp_dqt_init;
+      l_scale_factor tp_dqt_init;
+    begin
+      l_quality := case
+                     when p_quality < 50 then trunc( 5000 / p_quality )
+                     else 200 - 2 * p_quality
+                   end;
+      l_luminance := tp_dqt_init
+        ( 16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55
+        , 14, 13, 16, 24, 40, 57, 69, 56, 14, 17, 22, 29, 51, 87, 80, 62
+        , 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92
+        , 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99
+        );
+      l_chrominance := tp_dqt_init
+        ( 17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99
+        , 24, 26, 56, 99, 99, 99, 99, 99, 47, 66, 99, 99, 99, 99, 99, 99
+        , 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99
+        , 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99
+        );
+      for i in 1 .. 64
+      loop
+        l_tmp := trunc( ( l_quality * l_luminance( i ) + 50 ) / 100 );
+        l_luminance( i ) := case
+                              when l_tmp <= 0  then 1
+                              when l_tmp > 255 then 255
+                              else l_tmp
+                            end;
+        l_tmp := trunc( ( l_quality * l_chrominance( i ) + 50 ) / 100 );
+        l_chrominance( i ) := case
+                                when l_tmp <= 0  then 1
+                                when l_tmp > 255 then 255
+                                else l_tmp
+                              end;
+      end loop;
+      --
+      l_scale_factor := tp_dqt_init
+          ( 1.0, 1.387039845, 1.306562965, 1.175875602
+          , 1.0, 0.785694958, 0.541196100, 0.275899379
+          );
+      l_zigzag := tp_dqt_init
+        ( 0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5
+        , 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28
+        , 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51
+        , 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63
+        );
+      for i in 0 .. 7
+      loop
+        for j in 0 .. 7
+        loop
+          l_tmp := 8 * i + j;
+          l_divisors( 0 )( l_tmp ) :=
+             1 / ( l_luminance( l_tmp + 1 ) * l_scale_factor( i + 1 ) * l_scale_factor( j + 1 ) * 8 );
+          l_divisors( 1 )( l_tmp ) :=
+             1 / ( l_chrominance( l_tmp + 1 ) * l_scale_factor( i + 1 ) * l_scale_factor( j + 1 ) * 8 );
+          l_lum   := l_lum   || to_char( l_luminance(   1 + l_zigzag( l_tmp + 1 ) ), 'fm0X' );
+          l_chrom := l_chrom || to_char( l_chrominance( 1 + l_zigzag( l_tmp + 1 ) ), 'fm0X' );
+          l_natural_order( l_tmp ) := l_zigzag( l_tmp + 1 );
+        end loop;
+      end loop;
+      --
+      l_dqt := '00' || l_lum || '01' || l_chrom; -- DQT table 0  + DQT table 1
+    end init_matrix;
+    --
+    procedure init_huffman
+    is
+      type tp_dht_init is table of pls_integer;
+      l_bits_DC_lum   tp_dht_init;
+      l_bits_DC_chrom tp_dht_init;
+      l_bits_AC_lum   tp_dht_init;
+      l_bits_AC_chrom tp_dht_init;
+      l_val_DC_lum    tp_dht_init;
+      l_val_DC_chrom  tp_dht_init;
+      l_val_AC_lum    tp_dht_init;
+      l_val_AC_chrom  tp_dht_init;
+      --
+      procedure init_matrix_and_dht( p_idx pls_integer, p_bits tp_dht_init, p_val tp_dht_init )
+      is
+        l_p    pls_integer;
+        l_si   pls_integer;
+        l_tmp  pls_integer;
+        l_code pls_integer;
+        type tp_pls_tab is table of pls_integer index by pls_integer;
+        l_huffm_code tp_pls_tab;
+        l_huffm_size tp_pls_tab;
+      begin
+        l_p := 0;
+        for l in 1 .. 16
+        loop
+--dbms_output.put_line( 'inithuf: ' || l || ' ' || p_bits( l + 1 ) );
+          for i in 1 .. p_bits( l + 1 )
+          loop
+            l_huffm_size( l_p ) := l;
+            l_p := l_p + 1;
+          end loop;
+        end loop;
+        l_huffm_size( l_p ) := 0;
+        --
+        l_p := 0;
+        l_code := 0;
+        l_si := l_huffm_size( 0 );
+        while l_huffm_size( l_p ) != 0
+        loop
+          while l_huffm_size( l_p ) = l_si
+          loop
+            l_huffm_code( l_p ) := l_code;
+            l_p := l_p + 1;
+            l_code := l_code + 1;
+          end loop;
+          l_si := l_si + 1;
+          l_code := 2 * l_code;
+        end loop;
+        --
+        for i in l_huffm_code.last + 1 .. l_huffm_size.last
+        loop
+          l_huffm_code( i ) := 0;
+        end loop;
+        for p in 0 .. l_huffm_size.last - 1
+        loop
+          l_tmp := p_val( p + 1 );
+--dbms_output.put_line( 'inithuf: ' || p || ' ' || l_huffm_code(p) || ' ' || l_huffm_size(p) || ' ' || l_tmp );
+          l_DC_AC_matrix( p_idx )( l_tmp )( 0 ) := l_huffm_code( p );
+          l_DC_AC_matrix( p_idx )( l_tmp )( 1 ) := l_huffm_size( p );
+        end loop;
+        --
+        for i in p_bits.first .. p_bits.last
+        loop
+          l_dht := l_dht || to_char( p_bits( i ), 'fm0X' );
+        end loop;
+        for i in p_val.first .. p_val.last
+        loop
+          l_dht := l_dht || to_char( p_val( i ), 'fm0X' );
+        end loop;
+        --
+      end init_matrix_and_dht;
+    begin
+      l_bits_DC_lum   := tp_dht_init( 0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 );
+      l_bits_DC_chrom := tp_dht_init( 1, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 );
+      l_bits_AC_lum   := tp_dht_init( 16, 0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 125 );
+      l_bits_AC_chrom := tp_dht_init( 17, 0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 119 );
+      --
+      l_val_DC_lum   := tp_dht_init( 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 );
+      l_val_DC_chrom := tp_dht_init( 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 );
+      l_val_AC_lum   := tp_dht_init
+        (   1,   2,  3,    0,   4,  17,   5,  18,  33,  49,  65,   6,  19,  81,  97,   7
+        ,  34, 113,  20,  50, 129, 145, 161,   8,  35,  66, 177, 193,  21,  82, 209, 240
+        ,  36,  51,  98, 114, 130,   9,  10,  22,  23,  24,  25,  26,  37,  38,  39,  40
+        ,  41,  42,  52,  53,  54,  55,  56,  57,  58,  67,  68,  69,  70,  71,  72,  73
+        ,  74,  83,  84,  85,  86,  87,  88,  89,  90,  99, 100, 101, 102, 103, 104, 105
+        , 106, 115, 116, 117, 118, 119, 120, 121, 122, 131, 132, 133, 134, 135, 136, 137
+        , 138, 146, 147, 148, 149, 150, 151, 152, 153, 154, 162, 163, 164, 165, 166, 167
+        , 168, 169, 170, 178, 179, 180, 181, 182, 183, 184, 185, 186, 194, 195, 196, 197
+        , 198, 199, 200, 201, 202, 210, 211, 212, 213, 214, 215, 216, 217, 218, 225, 226
+        , 227, 228, 229, 230, 231, 232, 233, 234, 241, 242, 243, 244, 245, 246, 247, 248
+        , 249, 250 );
+      l_val_AC_chrom := tp_dht_init
+        (   0,   1,   2,   3,  17,   4,   5,  33,  49,   6,  18,  65,  81,   7,  97, 113
+        ,  19,  34,  50, 129,   8,  20,  66, 145, 161, 177, 193,   9,  35,  51,  82, 240
+        ,  21,  98, 114, 209,  10,  22,  36,  52, 225,  37, 241,  23,  24,  25,  26,  38
+        ,  39,  40,  41,  42,  53,  54,  55,  56,  57,  58,  67,  68,  69,  70,  71,  72
+        ,  73,  74,  83,  84,  85,  86,  87,  88,  89,  90,  99, 100, 101, 102, 103, 104
+        , 105, 106, 115, 116, 117, 118, 119, 120, 121, 122, 130, 131, 132, 133, 134, 135
+        , 136, 137, 138, 146, 147, 148, 149, 150, 151, 152, 153, 154, 162, 163, 164, 165
+        , 166, 167, 168, 169, 170, 178, 179, 180, 181, 182, 183, 184, 185, 186, 194, 195
+        , 196, 197, 198, 199, 200, 201, 202, 210, 211, 212, 213, 214, 215, 216, 217, 218
+        , 226, 227, 228, 229, 230, 231, 232, 233, 234, 242, 243, 244, 245, 246, 247, 248
+        , 249, 250 );
+      --
+      init_matrix_and_dht( 0, l_bits_DC_lum, l_val_DC_lum );
+      init_matrix_and_dht( 1, l_bits_AC_lum, l_val_AC_lum );
+      init_matrix_and_dht( 2, l_bits_DC_chrom, l_val_DC_chrom );
+      init_matrix_and_dht( 3, l_bits_AC_chrom, l_val_AC_chrom );
+/*
+      for i in l_bits_DC_lum.first .. l_bits_DC_lum.last
+      loop
+        l_dht := l_dht || to_char( l_bits_DC_lum( i ), 'fm0X' );
+      end loop;
+      for i in l_val_DC_lum.first .. l_val_DC_lum.last
+      loop
+        l_dht := l_dht || to_char( l_val_DC_lum( i ), 'fm0X' );
+      end loop;
+      for i in l_bits_AC_lum.first .. l_bits_AC_lum.last
+      loop
+        l_dht := l_dht || to_char( l_bits_AC_lum( i ), 'fm0X' );
+      end loop;
+      for i in l_val_AC_lum.first .. l_val_AC_lum.last
+      loop
+        l_dht := l_dht || to_char( l_val_AC_lum( i ), 'fm0X' );
+      end loop;
+      for i in l_bits_DC_chrom.first .. l_bits_DC_chrom.last
+      loop
+        l_dht := l_dht || to_char( l_bits_DC_chrom( i ), 'fm0X' );
+      end loop;
+      for i in l_val_DC_chrom.first .. l_val_DC_chrom.last
+      loop
+        l_dht := l_dht || to_char( l_val_DC_chrom( i ), 'fm0X' );
+      end loop;
+      for i in l_bits_AC_chrom.first .. l_bits_AC_chrom.last
+      loop
+        l_dht := l_dht || to_char( l_bits_AC_chrom( i ), 'fm0X' );
+      end loop;
+      for i in l_val_AC_chrom.first .. l_val_AC_chrom.last
+      loop
+        l_dht := l_dht || to_char( l_val_AC_chrom( i ), 'fm0X' );
+      end loop;
+*/
+      --
+      l_huffm_buf  := 0;
+      l_huffm_bits := 0;
+      l_lastDCvalue := tp_tn( 0 => 0, 1 => 0, 2 => 0 );
+    end init_huffman;
+    --
+    procedure init_color( p_idx pls_integer, p_rgb varchar2 )
+    is
+    begin
+      l_color_comp( p_idx )( 0 ) :=
+           0.299 * to_number( substr( p_rgb, 1, 2 ), 'XX' )
+         + 0.587 * to_number( substr( p_rgb, 3, 2 ), 'XX' )
+         + 0.114 * to_number( substr( p_rgb, 5, 2 ), 'XX' );
+      l_color_comp( p_idx )( 1 ) := 128
+         - 0.16874 * to_number( substr( p_rgb, 1, 2 ), 'XX' )
+         - 0.33126 * to_number( substr( p_rgb, 3, 2 ), 'XX' )
+         + 0.5 * to_number( substr( p_rgb, 5, 2 ), 'XX' );
+      l_color_comp( p_idx )( 2 ) := 128
+         + 0.5 * to_number( substr( p_rgb, 1, 2 ), 'XX' )
+         - 0.41869 * to_number( substr( p_rgb, 3, 2 ), 'XX' )
+         - 0.08131 * to_number( substr( p_rgb, 5, 2 ), 'XX' );
+    end init_color;
+    --
+    procedure huffman_buffer( p_code number, p_size pls_integer )
+    is
+      l_b    raw(8);
+      l_buf  number := bitand( p_code, power( 2, p_size ) - 1 );
+      l_bits pls_integer := l_huffm_bits + p_size;
+    begin
+--dbms_output.put_line( 'bufferIt: ' || p_code || ' ' || p_size );
+      l_buf := l_buf * power( 2, 24 - l_bits );
+      l_buf := l_buf + l_huffm_buf - bitand( l_buf, l_huffm_buf );
+      while l_bits >= 8
+      loop
+        l_b := to_char( bitand( l_buf / 65536, 255 ), 'fm0X' );
+        if l_b = 'FF'
+        then
+          dbms_lob.writeappend( l_jpg
+                              , 2
+                              , 'FF00'
+                              );
+        else
+          dbms_lob.writeappend( l_jpg
+                              , 1
+                              , l_b
+                              );
+        end if;
+        l_buf := bitand( l_buf * 256, 4294967295 );
+        l_bits := l_bits - 8;
+      end loop;
+      l_huffm_buf  := l_buf;
+      l_huffm_bits := l_bits;
+    end huffman_buffer;
+    --
+    procedure huffman_flush
+    is
+      l_b    raw(8);
+      l_buf  number := l_huffm_buf;
+      l_bits pls_integer := l_huffm_bits;
+    begin
+      l_buf := l_buf * power( 2, 24 - l_bits );
+      l_buf := l_buf + l_huffm_buf - bitand( l_buf, l_huffm_buf );
+      while l_bits >= 8
+      loop
+        l_b := to_char( bitand( l_buf / 65536, 255 ), 'fm0X' );
+        if l_b = 'FF'
+        then
+          dbms_lob.writeappend( l_jpg
+                              , 2
+                              , 'FF00'
+                              );
+        else
+          dbms_lob.writeappend( l_jpg
+                              , 1
+                              , l_b
+                              );
+        end if;
+        l_buf := l_buf * 256;
+        l_bits := l_bits - 8;
+      end loop;
+      if l_bits > 0
+      then
+        l_b := to_char( bitand( l_buf / 65536, 255 ), 'fm0X' );
+        dbms_lob.writeappend( l_jpg
+                            , 1
+                            , l_b
+                            );
+      end if;
+    end huffman_flush;
+    --
+    procedure write_jpeg_data
+    is
+      l_block tp_mn;
+      procedure huffman_encode( p_dct tp_tn, p_comp pls_integer )
+      is
+        l_r    pls_integer;
+        l_idx  pls_integer;
+        l_tmp1 pls_integer;
+        l_tmp2 pls_integer;
+        l_bits pls_integer;
+      begin
+        l_idx := 2 * sign( p_comp );
+        l_tmp1 := p_dct( 0 ) - l_lastDCvalue( p_comp );
+        l_tmp2 := l_tmp1;
+        if l_tmp1 < 0
+        then
+          l_tmp1 := - l_tmp1;
+          l_tmp2 := l_tmp2 - 1;
+        end if;
+        l_bits := 0;
+        while l_tmp1 > 0
+        loop
+          l_bits := l_bits + 1;
+          l_tmp1 := trunc( l_tmp1 / 2 );
+        end loop;
+        huffman_buffer( l_DC_AC_matrix( l_idx )( l_bits )( 0 )
+                      , l_DC_AC_matrix( l_idx )( l_bits )( 1 )
+                      );
+        if l_bits > 0
+        then
+          huffman_buffer( l_tmp2, l_bits );
+        end if;
+-- xyab
+        l_idx := l_idx + 1;
+        l_r := 0;
+        for k in 1 ..63
+        loop
+--dbms_output.put_line(  't: ' || k || ' ' || l_natural_order( k ) || ' ' || p_dct( l_natural_order( k ) ) );
+          l_tmp1 := p_dct( l_natural_order( k ) );
+          if l_tmp1 = 0
+          then
+            l_r := l_r + 1;
+          else
+            while l_r > 15
+            loop
+              huffman_buffer( l_DC_AC_matrix( l_idx )( 240 )( 0 )
+                            , l_DC_AC_matrix( l_idx )( 240 )( 1 )
+                            );
+              l_r := l_r - 16;
+            end loop;
+            l_tmp2 := l_tmp1;
+            if l_tmp1 < 0
+            then
+              l_tmp1 := - l_tmp1;
+              l_tmp2 := l_tmp2 - 1;
+            end if;
+            l_bits := 1;
+            l_tmp1 := trunc( l_tmp1 / 2 );
+            while l_tmp1 > 0
+            loop
+              l_bits := l_bits + 1;
+              l_tmp1 := trunc( l_tmp1 / 2 );
+            end loop;
+--dbms_output.put_line(  ' t: ' || l_r  || ' ' || l_bits || ' ' || ( 16 * l_r + l_bits ) || ' ' || l_tmp2 );
+            l_r := 16 * l_r + l_bits;
+            huffman_buffer( l_DC_AC_matrix( l_idx )( l_r )( 0 )
+                          , l_DC_AC_matrix( l_idx )( l_r )( 1 )
+                          );
+            huffman_buffer( l_tmp2, l_bits );
+            l_r := 0;
+          end if;
+        end loop;
+        --
+        if l_r > 0
+        then
+          huffman_buffer( l_DC_AC_matrix( l_idx )( 0 )( 0 )
+                        , l_DC_AC_matrix( l_idx )( 0 )( 1 )
+                        );
+        end if;
+        --
+        l_lastDCvalue( p_comp ) := p_dct( 0 );
+      end huffman_encode;
+      --
+      function dct( p_x pls_integer, p_y pls_integer, p_comp pls_integer )
+      return tp_tn
+      is
+        tmp0  number;
+        tmp1  number;
+        tmp2  number;
+        tmp3  number;
+        tmp4  number;
+        tmp5  number;
+        tmp6  number;
+        tmp7  number;
+        tmp10 number;
+        tmp11 number;
+        tmp12 number;
+        tmp13 number;
+        z1    number;
+        z2    number;
+        z3    number;
+        z4    number;
+        z5    number;
+        z11   number;
+        z13   number;
+        l_idx pls_integer;
+        l_dct tp_tn;
+      begin
+--dbms_output.put_line( 'forwardDCT' );
+        for i in 0 .. 7
+        loop
+          for j in 0 .. 7
+          loop
+            l_block( i )( j ) := l_color_comp( l_m( 8 * p_x + j )( 8 * p_y + i ) )( p_comp ) - 128;
+          end loop;
+        end loop;
+        --
+        for i in 0 .. 7
+        loop
+          tmp0 := l_block( i )( 0 ) + l_block( i )( 7 );
+          tmp7 := l_block( i )( 0 ) - l_block( i )( 7 );
+          tmp1 := l_block( i )( 1 ) + l_block( i )( 6 );
+          tmp6 := l_block( i )( 1 ) - l_block( i )( 6 );
+          tmp2 := l_block( i )( 2 ) + l_block( i )( 5 );
+          tmp5 := l_block( i )( 2 ) - l_block( i )( 5 );
+          tmp3 := l_block( i )( 3 ) + l_block( i )( 4 );
+          tmp4 := l_block( i )( 4 ) - l_block( i )( 4 );
+          --
+          tmp10 := tmp0 + tmp3;
+          tmp13 := tmp0 - tmp3;
+          tmp11 := tmp1 + tmp2;
+          tmp12 := tmp1 - tmp2;
+          --
+          z1 := (tmp12 + tmp13) * 0.707106781;
+          l_block( i )( 0 ) := tmp10 + tmp11;
+          l_block( i )( 4 ) := tmp10 - tmp11;
+          l_block( i )( 2 ) := tmp13 + z1;
+          l_block( i )( 6 ) := tmp13 - z1;
+          --
+          tmp10 := tmp4 + tmp5;
+          tmp11 := tmp5 + tmp6;
+          tmp12 := tmp6 + tmp7;
+          z5 := ( tmp10 - tmp12 ) * 0.382683433;
+          z2 := 0.541196100 * tmp10 + z5;
+          z4 := 1.306562965 * tmp12 + z5;
+          z3 := tmp11 * 0.707106781;
+          z11 := tmp7 + z3;
+          z13 := tmp7 - z3;
+          --
+          l_block( i )( 5 ) := z13 + z2;
+          l_block( i )( 3 ) := z13 - z2;
+          l_block( i )( 1 ) := z11 + z4;
+          l_block( i )( 7 ) := z11 - z4;
+        end loop;
+        --
+        for i in 0 .. 7
+        loop
+          tmp0 := l_block( 0 )( i ) + l_block( 7 )( i );
+          tmp7 := l_block( 0 )( i ) - l_block( 7 )( i );
+          tmp1 := l_block( 1 )( i ) + l_block( 6 )( i );
+          tmp6 := l_block( 1 )( i ) - l_block( 6 )( i );
+          tmp2 := l_block( 2 )( i ) + l_block( 5 )( i );
+          tmp5 := l_block( 2 )( i ) - l_block( 5 )( i );
+          tmp3 := l_block( 3 )( i ) + l_block( 4 )( i );
+          tmp4 := l_block( 3 )( i ) - l_block( 4 )( i );
+          --
+          tmp10 := tmp0 + tmp3;
+          tmp13 := tmp0 - tmp3;
+          tmp11 := tmp1 + tmp2;
+          tmp12 := tmp1 - tmp2;
+          --
+          z1 := (tmp12 + tmp13) * 0.707106781;
+          l_block( 0 )( i ) := tmp10 + tmp11;
+          l_block( 4 )( i ) := tmp10 - tmp11;
+          l_block( 2 )( i ) := tmp13 + z1;
+          l_block( 6 )( i ) := tmp13 - z1;
+          --
+          tmp10 := tmp4 + tmp5;
+          tmp11 := tmp5 + tmp6;
+          tmp12 := tmp6 + tmp7;
+          z5 := ( tmp10 - tmp12 ) * 0.382683433;
+          z2 := 0.541196100 * tmp10 + z5;
+          z4 := 1.306562965 * tmp12 + z5;
+          z3 := tmp11 * 0.707106781;
+          z11 := tmp7 + z3;
+          z13 := tmp7 - z3;
+          --
+          l_block( 5 )( i ) := z13 + z2;
+          l_block( 3 )( i ) := z13 - z2;
+          l_block( 1 )( i ) := z11 + z4;
+          l_block( 7 )( i ) := z11 - z4;
+        end loop;
+        --
+        for i in 0 .. 7
+        loop
+          for j in 0 .. 7
+          loop
+            l_idx := i * 8 + j;
+            l_dct( l_idx ) := round( l_block( i )( j ) * l_divisors( sign( p_comp ) )( l_idx ) );
+--dbms_output.put( ' ' || l_dct( l_idx ) );
+          end loop;
+--dbms_output.put_line( '' );
+        end loop;
+        return l_dct;
+      end dct;
+      --
+    begin
+      for r in 0 .. ceil( l_height / 8 ) - 1
+      loop
+        for c in 0 .. ceil( l_width / 8 ) - 1
+        loop
+          for n in 0 .. 2
+          loop
+            huffman_encode( dct( c, r, n ), n );
+          end loop;
+        end loop;
+      end loop;
+    end write_jpeg_data;
+  begin
+    if p_png is null or utl_raw.substr( p_png, 1, 8 ) != '89504E470D0A1A0A'
+    then
+      return null;
+    end if;
+    l_idx := 9;
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    if utl_raw.substr( l_tmp, 1, 4 ) != '49484452' -- IHDR
+    then
+      return null;
+    end if;
+    l_width  := to_number( utl_raw.substr( l_tmp, 5, 4 ), 'XXXXXXXX' );
+    l_height := to_number( utl_raw.substr( l_tmp, 9, 4 ), 'XXXXXXXX' );
+    --
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    if utl_raw.substr( l_tmp, 1, 4 ) != '504C5445' -- PLTE
+    then
+      return null;
+    end if;
+    init_color( 0, utl_raw.substr( l_tmp, 5, 3 ) );
+    init_color( 1, utl_raw.substr( l_tmp, 8, 3 ) );
+    init_color( -1, '000000' );
+    --
+    l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+    l_len := to_number( l_tmp, 'XXXXXXXX' );
+    l_idx := l_idx + 4;
+    l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+    l_idx := l_idx + 4 + l_len + 4;
+    --
+    if utl_raw.substr( l_tmp, 1, 4 ) = '74524E53' -- tRNS
+    then
+      l_tmp := utl_raw.substr( p_png, l_idx, 4 );
+      l_len := to_number( l_tmp, 'XXXXXXXX' );
+      l_idx := l_idx + 4;
+      l_tmp := utl_raw.substr( p_png, l_idx, l_len + 4 );
+      l_idx := l_idx + 4 + l_len + 4;
+      l_transparant := true;
+    end if;
+    --
+    if utl_raw.substr( l_tmp, 1, 4 ) != '49444154' -- IDAT
+    then
+      return null;
+    end if;
+    l_tmp := utl_raw.substr( l_tmp, 5 + 2, l_len - 2 - 4 );
+    dbms_lob.createtemporary( l_dat, true );
+    l_hdl := utl_compress.lz_uncompress_open( utl_raw.concat( '1F8B0800000000000003', l_tmp ) );
+    loop
+      begin
+        utl_compress.lz_uncompress_extract( l_hdl, l_tmp );
+        dbms_lob.writeappend( l_dat, utl_raw.length( l_tmp ), l_tmp );
+      exception
+        when no_data_found then exit;
+      end;
+    end loop;
+    utl_compress.lz_uncompress_close( l_hdl );
+    --
+    for i in 0 .. l_height - 1
+    loop
+      l_tmp := dbms_lob.substr( l_dat, l_width, 2 + i * ( l_width + 1 ) );
+      for j in 0 .. l_width - 1
+      loop
+        l_m( j )( i ) := to_number( utl_raw.substr( l_tmp, j, 1 ), 'XX' );
+      end loop;
+    end loop;
+    dbms_lob.freetemporary( l_dat );
+    if mod( l_width, 8 ) > 0
+    then
+      for j in l_width .. 8 * ceil( l_width / 8 ) - 1
+      loop
+        for i in 0 .. l_m( 0 ).last
+        loop
+          if l_m( 0 ).exists( i + 1 )
+          then  -- just to get the same value as my java example
+            l_m( j )( i ) := l_m( 0 )( i + 1 );
+          else
+            l_m( j )( i ) := -1;
+          end if;
+        end loop;
+      end loop;
+    end if;
+    if mod( l_height, 8 ) > 0
+    then
+      for i in l_height .. 8 * ceil( l_height / 8 ) - 1
+      loop
+        for j in 0 .. l_m.last
+        loop
+          l_m( j )( i ) := -1;
+        end loop;
+      end loop;
+    end if;
+--dbms_output.put_line( l_m.count || 'x' || l_m(0).count );
+--dbms_output.put_line( l_m.count || 'x' || l_m(l_m.last).count );
+    --
+    init_matrix( nvl( check_int( p_parm, 'quality', 100, 1 ), 100 ) );
+    init_huffman;
+    --
+    dbms_lob.createtemporary( l_jpg, true );
+    dbms_lob.writeappend( l_jpg
+                        , 20
+                        ,  'FFD8'                            -- SOI Start of Image
+                        || 'FFE0'                            -- a APP0 jpeg JFIF segment
+                        || '0010'                            -- size 16
+                        || '4A464946000101'                  -- JFIF 1.01
+                        || aspect_ratio( l_width, l_height ) -- pixel aspect ratio
+                        || '0000'                            -- thumbnail
+                        );
+    l_len := length( l_dqt ) / 2;
+    dbms_lob.writeappend( l_jpg
+                        , l_len + 4
+                        ,  'FFDB'                            -- DQT luminance + chrominance
+                        || to_char( l_len + 2, 'fm0XXX' )    -- size
+                        || l_dqt
+                        );
+    dbms_lob.writeappend( l_jpg
+                        , 10
+                        ,  'FFC0'                            -- SOF Start of Frame Header
+                        || '0011'                            -- size 17
+                        || '08'                              -- precision
+                        || to_char( l_height, 'fm0XXX' )
+                        || to_char( l_width,  'fm0XXX' )
+                        || '03'                              -- NumberOfComponents
+                        );
+    for i in 1 .. 3
+    loop
+      dbms_lob.writeappend( l_jpg
+                          , 3
+                          , to_char( i, 'fm0X' )               -- Component ID
+                          || to_char( 17, 'fm0X' )             -- Sampl factor
+                          || to_char( sign( i - 1 ),  'fm0X' ) -- Q table
+                          );
+    end loop;
+    l_len := length( l_dht ) / 2;
+    dbms_lob.writeappend( l_jpg
+                        , l_len + 4
+                        ,  'FFC4'                            -- DHT DC/AC luminance + DC/AC chrominance
+                        || to_char( l_len + 2, 'fm0XXX' )    -- size
+                        || l_dht
+                        );
+    dbms_lob.writeappend( l_jpg
+                        , 14
+                        , 'FFDA000C03010002110311003F00'     -- SOS Start of Scan
+                        );
+    write_jpeg_data;
+    dbms_lob.writeappend( l_jpg, 2, 'FFD9' );                -- EOI End of Image
+    --
+    return l_jpg;
+  end png2jpg;
+  --
+  function barcode_blob( p_val       varchar2 character set any_cs
+                       , p_type      varchar2
+                       , p_parm      varchar2 := null
+                       , p_format    varchar2 := 'BMP'
+                       , p_logo      blob     := null
+                       , p_logo_href varchar2 := null
                        )
   return blob
   is
@@ -4654,10 +6065,13 @@ THE SOFTWARE.
   begin
     if upper( p_format ) = 'BMP'
     then
-      return png2bmp( barcode( p_val, p_type, p_parm ) );
+      return png2bmp( barcode( p_val, p_type, p_parm ), p_parm );
     elsif upper( p_format ) = 'GIF'
     then
-      return png2gif( barcode( p_val, p_type, p_parm ) );
+      return png2gif( barcode( p_val, p_type, p_parm ), p_parm );
+    elsif upper( p_format ) in ( 'JPG', 'JPEG' )
+    then
+      return png2jpg( barcode( p_val, p_type, p_parm ), p_parm );
     elsif upper( p_format ) = 'PNG'
     then
       return barcode( p_val, p_type, p_parm );
@@ -4665,7 +6079,7 @@ THE SOFTWARE.
     then
       dbms_lob.createtemporary( l_tmp, true );
       converttoblob( l_tmp
-                   , barcode_svg( p_val, p_type, p_parm )
+                   , barcode_svg( p_val, p_type, p_parm, p_logo, p_logo_href )
                    );
       return l_tmp;
     else
@@ -4673,4 +6087,5 @@ THE SOFTWARE.
     end if;
   end barcode_blob;
   --
-end;
+end as_barcode;
+/
