@@ -33,10 +33,12 @@ is
 **     added logo to QR in svg format
 **     added jpeg format
 **   Date: 2024-09-08
-**      added some postal 4-state barcodes
-**        * Royal Mail 4-State Customer Code
-**        * Australia Post 4-State Customer Barcode
-**        * Dutch PostNL KIX
+**     added some postal 4-state barcodes
+**       * Royal Mail 4-State Customer Code
+**       * Australia Post 4-State Customer Barcode
+**       * Dutch PostNL KIX
+**   Date: 2024-10-21
+**     compile on database 12.2 and older 
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2016-2024 by Anton Scheffer
@@ -2725,18 +2727,17 @@ THE SOFTWARE.
     --
     procedure init_rm_alfabet
     is
+      l_chr varchar2(1);
     begin
-      l_4s := tp_4s
-                 ( '0' => 'TTFF', '1' => 'TDAF', '2' => 'TDFA', '3' => 'DTAF'
-                 , '4' => 'DTFA', '5' => 'DDAA', '6' => 'TADF', '7' => 'TFTF'
-                 , '8' => 'TFDA', '9' => 'DATF', 'A' => 'DADA', 'B' => 'DFTA'
-                 , 'C' => 'TAFD', 'D' => 'TFAD', 'E' => 'TFFT', 'F' => 'DAAD'
-                 , 'G' => 'DAFT', 'H' => 'DFAT', 'I' => 'ATDF', 'J' => 'ADTF'
-                 , 'K' => 'ADDA', 'L' => 'FTTF', 'M' => 'FTDA', 'N' => 'FDTA'
-                 , 'O' => 'ATFD', 'P' => 'ADAD', 'Q' => 'ADFT', 'R' => 'FTAD'
-                 , 'S' => 'FTFT', 'T' => 'FDAT', 'U' => 'AADD', 'V' => 'AFTD'
-                 , 'W' => 'AFDT', 'X' => 'FATD', 'Y' => 'FADT', 'Z' => 'FFTT'
-                 );
+      for i in 1 .. 36
+      loop
+        l_chr := substr( '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', i, 1 );
+        l_4s( l_chr ) := substr( 'TTFFTDAFTDFADTAFDTFADDAATADFTFTF'
+                              || 'TFDADATFDADADFTATAFDTFADTFFTDAAD'
+                              || 'DAFTDFATATDFADTFADDAFTTFFTDAFDTA'
+                              || 'ATFDADADADFTFTADFTFTFDATAADDAFTD'
+                              || 'AFDTFATDFADTFFTT', i * 4 - 3, 4 );
+      end loop;
     end init_rm_alfabet;
     --
     function apsc( p_val varchar2 )
@@ -2757,28 +2758,24 @@ THE SOFTWARE.
       then
         raise_application_error( -20001, 'Australian POST barcode should start with a 8 digits DPID' );
       end if;
-      l_nc :=
-        tp_4s( '0' => '00', '1' => '01', '2' => '02', '3' => '10', '4' => '11'
-             , '5' => '12', '6' => '20', '7' => '21', '8' => '22', '9' => '30'
-             );
-      l_cc :=
-        tp_4s( 'A' => '000', 'B' => '001', 'C' => '002', 'D' => '010'
-             , 'E' => '011', 'F' => '012', 'G' => '020', 'H' => '021'
-             , 'I' => '022', 'J' => '100', 'K' => '101', 'L' => '102'
-             , 'M' => '110', 'N' => '111', 'O' => '112', 'P' => '120'
-             , 'Q' => '121', 'R' => '122', 'S' => '200', 'T' => '201'
-             , 'U' => '202', 'V' => '210', 'W' => '211', 'X' => '212'
-             , 'Y' => '220', 'Z' => '221', '0' => '222', '1' => '300'
-             , '2' => '301', '3' => '302', '4' => '310', '5' => '311'
-             , '6' => '312', '7' => '320', '8' => '321', '9' => '322'
-             , 'a' => '023', 'b' => '030', 'c' => '031', 'd' => '032'
-             , 'e' => '033', 'f' => '103', 'g' => '113', 'h' => '123'
-             , 'i' => '130', 'j' => '131', 'k' => '132', 'l' => '133'
-             , 'm' => '203', 'n' => '213', 'o' => '223', 'p' => '230'
-             , 'q' => '231', 'r' => '232', 's' => '233', 't' => '303'
-             , 'u' => '313', 'v' => '323', 'w' => '330', 'x' => '331'
-             , 'y' => '332', 'z' => '333', ' ' => '003', '#' => '013'
-             );
+      --
+      for i in 26 .. 35
+      loop
+        l_chr := utl_i18n.raw_to_char( to_char( i + 22, 'fm0X' ), 'US7ASCII' );
+        l_nc( l_chr ) := trunc( ( i - 26 ) / 3 ) || mod( i - 26, 3 );
+        l_cc( l_chr ) := trunc( i / 9 ) || mod( trunc( i / 3 ), 3 ) || mod( i, 3 );
+      end loop;
+      for i in 0 .. 25
+      loop
+        l_chr := utl_i18n.raw_to_char( to_char( i + 65, 'fm0X' ), 'US7ASCII' );
+        l_cc( l_chr ) := trunc( i / 9 ) || mod( trunc( i / 3 ), 3 ) || mod( i, 3 );
+        l_chr := utl_i18n.raw_to_char( to_char( i + 97, 'fm0X' ), 'US7ASCII' );
+        l_cc( l_chr ) := trunc( ( i + 2 ) / 7 )
+                   || case when mod( i + 2, 7 ) > 2 then 3 else mod( i + 2, 7 ) end
+                   || case when mod( i + 6, 7 ) > 2 then 3 else mod( i + 6, 7 ) end;
+      end loop;
+      l_cc( ' ' ) := '003';
+      l_cc( '#' ) := '013';
       --
       if l_len = 8
       then   -- Standard Customer Barcode
@@ -2840,8 +2837,6 @@ THE SOFTWARE.
       then
         raise_application_error( -20001, 'invalid Australian POST barcode' );
       end if;
---dbms_output.put_line( length( l_val ) );
---dbms_output.put_line( replace( replace( replace( replace( l_val, '0', 'F' ), '1','A' ), '2', 'D' ), '3', 'T' ) );
       return l_val;
     end apsc;
     --
@@ -2859,22 +2854,12 @@ THE SOFTWARE.
     begin
       init_rm_alfabet;
       --
-      l_top := tp_checksum
-                 ( '0' => 1, '1' => 1, '2' => 1, '3' => 1, '4' => 1, '5' => 1
-                 , '6' => 2, '7' => 2, '8' => 2, '9' => 2, 'A' => 2, 'B' => 2
-                 , 'C' => 3, 'D' => 3, 'E' => 3, 'F' => 3, 'G' => 3, 'H' => 3
-                 , 'I' => 4, 'J' => 4, 'K' => 4, 'L' => 4, 'M' => 4, 'N' => 4
-                 , 'O' => 5, 'P' => 5, 'Q' => 5, 'R' => 5, 'S' => 5, 'T' => 5
-                 , 'U' => 0, 'V' => 0, 'W' => 0, 'X' => 0, 'Y' => 0, 'Z' => 0
-                 );
-      l_bottom := tp_checksum
-                    ( '0' => 1, '1' => 2, '2' => 3, '3' => 4, '4' => 5, '5' => 0
-                    , '6' => 1, '7' => 2, '8' => 3, '9' => 4, 'A' => 5, 'B' => 0
-                    , 'C' => 1, 'D' => 2, 'E' => 3, 'F' => 4, 'G' => 5, 'H' => 0
-                    , 'I' => 1, 'J' => 2, 'K' => 3, 'L' => 4, 'M' => 5, 'N' => 0
-                    , 'O' => 1, 'P' => 2, 'Q' => 3, 'R' => 4, 'S' => 5, 'T' => 0
-                    , 'U' => 1, 'V' => 2, 'W' => 3, 'X' => 4, 'Y' => 5, 'Z' => 0
-                    );
+      for i in 1 .. 36
+      loop
+        l_chr := substr( '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', i, 1 );
+        l_top( l_chr )    := mod( trunc( ( i + 5 ) / 6 ), 6 );
+        l_bottom( l_chr ) := mod( i, 6 );
+      end loop;
       --
       l_val := l_val || 'A';  -- start code
       for i in 1 .. length( p_val )
@@ -5471,7 +5456,6 @@ THE SOFTWARE.
         l_p := 0;
         for l in 1 .. 16
         loop
---dbms_output.put_line( 'inithuf: ' || l || ' ' || p_bits( l + 1 ) );
           for i in 1 .. p_bits( l + 1 )
           loop
             l_huffm_size( l_p ) := l;
@@ -5502,7 +5486,6 @@ THE SOFTWARE.
         for p in 0 .. l_huffm_size.last - 1
         loop
           l_tmp := p_val( p + 1 );
---dbms_output.put_line( 'inithuf: ' || p || ' ' || l_huffm_code(p) || ' ' || l_huffm_size(p) || ' ' || l_tmp );
           l_DC_AC_matrix( p_idx )( l_tmp )( 0 ) := l_huffm_code( p );
           l_DC_AC_matrix( p_idx )( l_tmp )( 1 ) := l_huffm_size( p );
         end loop;
@@ -5591,7 +5574,9 @@ THE SOFTWARE.
       --
       l_huffm_buf  := 0;
       l_huffm_bits := 0;
-      l_lastDCvalue := tp_tn( 0 => 0, 1 => 0, 2 => 0 );
+      l_lastDCvalue( 0 ) := 0;
+      l_lastDCvalue( 1 ) := 0;
+      l_lastDCvalue( 2 ) := 0;
     end init_huffman;
     --
     procedure init_color( p_idx pls_integer, p_rgb varchar2 )
@@ -5617,7 +5602,6 @@ THE SOFTWARE.
       l_buf  number := bitand( p_code, power( 2, p_size ) - 1 );
       l_bits pls_integer := l_huffm_bits + p_size;
     begin
---dbms_output.put_line( 'bufferIt: ' || p_code || ' ' || p_size );
       l_buf := l_buf * power( 2, 24 - l_bits );
       l_buf := l_buf + l_huffm_buf - bitand( l_buf, l_huffm_buf );
       while l_bits >= 8
@@ -5710,12 +5694,10 @@ THE SOFTWARE.
         then
           huffman_buffer( l_tmp2, l_bits );
         end if;
--- xyab
         l_idx := l_idx + 1;
         l_r := 0;
         for k in 1 ..63
         loop
---dbms_output.put_line(  't: ' || k || ' ' || l_natural_order( k ) || ' ' || p_dct( l_natural_order( k ) ) );
           l_tmp1 := p_dct( l_natural_order( k ) );
           if l_tmp1 = 0
           then
@@ -5741,7 +5723,6 @@ THE SOFTWARE.
               l_bits := l_bits + 1;
               l_tmp1 := trunc( l_tmp1 / 2 );
             end loop;
---dbms_output.put_line(  ' t: ' || l_r  || ' ' || l_bits || ' ' || ( 16 * l_r + l_bits ) || ' ' || l_tmp2 );
             l_r := 16 * l_r + l_bits;
             huffman_buffer( l_DC_AC_matrix( l_idx )( l_r )( 0 )
                           , l_DC_AC_matrix( l_idx )( l_r )( 1 )
@@ -5786,7 +5767,6 @@ THE SOFTWARE.
         l_idx pls_integer;
         l_dct tp_tn;
       begin
---dbms_output.put_line( 'forwardDCT' );
         for i in 0 .. 7
         loop
           for j in 0 .. 7
@@ -5877,9 +5857,7 @@ THE SOFTWARE.
           loop
             l_idx := i * 8 + j;
             l_dct( l_idx ) := round( l_block( i )( j ) * l_divisors( sign( p_comp ) )( l_idx ) );
---dbms_output.put( ' ' || l_dct( l_idx ) );
           end loop;
---dbms_output.put_line( '' );
         end loop;
         return l_dct;
       end dct;
@@ -5994,8 +5972,6 @@ THE SOFTWARE.
         end loop;
       end loop;
     end if;
---dbms_output.put_line( l_m.count || 'x' || l_m(0).count );
---dbms_output.put_line( l_m.count || 'x' || l_m(l_m.last).count );
     --
     init_matrix( nvl( check_int( p_parm, 'quality', 100, 1 ), 100 ) );
     init_huffman;
