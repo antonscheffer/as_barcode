@@ -7,4 +7,4 @@ I use that demo application also to develop and test this package. So it might b
 
 Supports QR-code, Aztec, data matrix, EAN-8, EAN-13, UPC-A, code39, code128, Interleaved 2 of 5 (ITF) and some (RM4SCC, Australia Post 4-State Customer Code, KIX) postal 4-State barcodes
 
-Output format includes png, svg, git, bmp and jpg.
+Output format includes png, svg, gif, bmp and jpg.
